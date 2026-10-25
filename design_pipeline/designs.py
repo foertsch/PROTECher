@@ -84,10 +84,22 @@ def select(
     missing = [d.id for d in pool if by not in d.scores]
     if missing:
         present = sorted({k for d in pool for k in d.scores})
+        # Mixed producers are the usual cause: a `predict_structure` call with
+        # a list of models returns one pool spanning all of them, and models
+        # do not report the same metrics.
+        producers = sorted({d.producer for d in pool})
+        scored = sorted({d.producer for d in pool if by in d.scores})
+        hint = (
+            f" This pool mixes {', '.join(producers)}, which do not report the "
+            f"same metrics; filter to one producer first, e.g. "
+            f"[d for d in designs if d.producer == {(scored or producers)[0]!r}]."
+            if len(producers) > 1
+            else ""
+        )
         raise KeyError(
             f"{len(missing)} design(s) have no score {by!r} "
             f"(e.g. {missing[0]!r}); present across this pool: "
-            f"{', '.join(present) or 'none'}"
+            f"{', '.join(present) or 'none'}.{hint}"
         )
     # Two stable sorts rather than a tuple key: reverse=True on a tuple would
     # also reverse the id tiebreak, so ties would reorder with the direction.

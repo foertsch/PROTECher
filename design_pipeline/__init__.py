@@ -17,6 +17,7 @@ from .api import design_sequences, make_protein_backbones, predict_structure
 from .designs import Design, Scores, lineage, select, to_dataframe
 from .errors import (
     MissingDependencyError,
+    MissingGPUError,
     MissingLigandError,
     MissingRuntimeError,
     PipelineError,
@@ -48,6 +49,7 @@ __all__ = [
     "UnknownModelError",
     "MissingRuntimeError",
     "MissingDependencyError",
+    "MissingGPUError",
     "MissingLigandError",
     "RunFailedError",
 ]

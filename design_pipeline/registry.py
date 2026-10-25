@@ -37,10 +37,18 @@ REGISTRY: dict[str, ModelAdapter] = {
     "protein_mpnn": adapters.protein_mpnn,
     "ligand_mpnn": adapters.ligand_mpnn,
     "soluble_mpnn": adapters.soluble_mpnn,
+    # Co-folding models. Chai-1 is the default; ColabFold stays, with the
+    # non-commercial AlphaFold2 weights that are the reason it is not.
+    "chai": adapters.chai,
+    "boltz": adapters.boltz,
+    "protenix": adapters.protenix,
     "colabfold": adapters.colabfold,
     "dummy_backbones": adapters.dummy_backbones,
     "dummy_sequences": adapters.dummy_sequences,
     "dummy_structures": adapters.dummy_structures,
+    "dummy_chai": adapters.dummy_chai,
+    "dummy_boltz": adapters.dummy_boltz,
+    "dummy_protenix": adapters.dummy_protenix,
 }
 
 

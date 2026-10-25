@@ -185,6 +185,45 @@ degrades to unconditioned design — plausible sequences, with the ligand contex
 that motivated choosing the model entirely absent. The ligand has to come in on
 the input structure; there is no transplanting helper.
 
+### Chai-1, Boltz-2, Protenix — one extra each, weights download on first run
+
+```bash
+uv pip install -e '.[chai]'      # the default folding model
+uv pip install -e '.[boltz]'     # Boltz-2
+uv pip install -e '.[protenix]'  # Protenix, pinned to 2.0.0
+```
+
+All three need **Linux and a CUDA GPU**, and Chai-1 additionally needs bfloat16
+(compute capability 8.0 or newer, i.e. Ampere and later). The adapters check
+this up front and raise `MissingGPUError` naming what is missing, rather than
+failing somewhere inside the model. Licences and MSA requirements are in the
+model table in [README.md](README.md) — read it before using Protenix for
+anything that ships.
+
+Each tool keeps its own weights cache; there is deliberately no shared one:
+
+| Model | Cache | Notes |
+|---|---|---|
+| `chai` | `$CHAI_DOWNLOADS_DIR` | Unset, chai_lab writes into its own installation directory. Set it. |
+| `boltz` | `$BOLTZ_CACHE` (default `~/.boltz`) | Must be absolute. Weights, CCD and the molecule archive are several GB; `boltz predict` fetches what is missing on the first run, and the adapter says so before it starts. |
+| `protenix` | `$PROTENIX_ROOT_DIR` (default `$HOME`) | Checkpoints and CCD data download on first use. |
+
+Two things to know about the arguments:
+
+- Chai-1 runs **in process** (the adapter imports `chai_lab`, and with it
+  torch), because its command line throws away the PAE matrix that
+  `pae_interaction` needs. It therefore has no `extra_args`; pass
+  `run_inference` arguments as keywords, e.g.
+  `predict_structure(seqs, num_trunk_recycles=5)`.
+- Protenix picks the checkpoint: `checkpoint="protenix_mini_default_v0.5.0"`
+  is much faster at comparable quality, and the `protenix_mini_esm_v0.5.0` /
+  `protenix_mini_ism_v0.5.0` variants need no MSA. Add
+  `use_default_params=True` to get the cycle and step counts a Mini checkpoint
+  was tuned for.
+
+To run the loop with no GPU and no network, use the fixture counterparts
+`dummy_chai`, `dummy_boltz` and `dummy_protenix`.
+
 ### ColabFold — optional Python extra, weights download on first run
 
 ```bash
@@ -308,12 +347,16 @@ seqs = design_sequences(backbones, "runs/v1/seqs", model_name="dummy_sequences")
 ```
 
 Registered: `rfdiffusion`, `protein_mpnn`, `ligand_mpnn`, `soluble_mpnn`,
-`colabfold`, `dummy_backbones`, `dummy_sequences`, `dummy_structures`. An
-unknown name lists the known ones.
+`chai`, `boltz`, `protenix`, `colabfold`, `dummy_backbones`,
+`dummy_sequences`, `dummy_structures`, `dummy_chai`, `dummy_boltz`,
+`dummy_protenix`. An unknown name lists the known ones.
 
 Running several sequence-design variants in one round needs no API support —
 the steps return plain lists, so the arms concatenate and scoring sees them
-together. See [examples/fanout.py](examples/fanout.py).
+together. Folding with several models does take an argument:
+`predict_structure(seqs, model_name=["chai", "boltz"])` folds every sequence
+with each, which leaves one pool with two producers, so filter to one before
+`select`. See [examples/fanout.py](examples/fanout.py).
 
 ### Iterative refinement
 
@@ -376,7 +419,8 @@ visible and the command being run is echoed to stderr.
 | What you see | What it means |
 |---|---|
 | `MissingRuntimeError` | Neither apptainer nor docker on `PATH`. Install one, or use the `dummy_*` models. |
-| `MissingDependencyError` | `colabfold_batch` or `ligandmpnn` is missing. The message names the extra; for MPNN see the separate-environment note in section 4. |
+| `MissingDependencyError` | A model's package or entry point is missing (`colabfold_batch`, `ligandmpnn`, `boltz`, `protenix`, `chai_lab`). The message names the extra; for MPNN see the separate-environment note in section 4. |
+| `MissingGPUError` | `chai`, `boltz` or `protenix` on a non-Linux host, a node with no CUDA GPU, or (Chai-1 only) a card older than Ampere. Move to a GPU node, pick another model, or use the matching `dummy_*` model. |
 | `MissingLigandError` | `ligand_mpnn` on a backbone with no ligand. Use `protein_mpnn` or `soluble_mpnn`, or supply a structure that carries the ligand. |
 | `UnknownModelError` | Typo in `model_name`; the message lists the registered ones. |
 | `RunFailedError: exit code N` | The model itself failed. Its output was streamed above the traceback — read that, not the traceback. |

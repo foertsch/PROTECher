@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any, Sequence
 
 import pytest
 
 from design_pipeline import (
+    REGISTRY,
+    Design,
     UnknownModelError,
     design_sequences,
     make_protein_backbones,
     predict_structure,
 )
+from design_pipeline.adapters import dummy_structures
 
 BB = "dummy_backbones"
 SEQ = "dummy_sequences"
 FOLD = "dummy_structures"
+FOLD_B = "fixture_fold_b"
 
 
 @pytest.fixture
@@ -135,6 +141,115 @@ def test_two_sequence_arms_share_one_fold_run(tmp_path, target) -> None:
     assert len({d.path for d in preds}) == 4
     # Each prediction still points back at the arm that produced it.
     assert {d.parent_id for d in preds} == {d.id for d in cold + hot}
+
+
+@dataclass(frozen=True)
+class RelabelledFold:
+    """A second structure predictor, so the list form has two models to run.
+
+    The fixture adapter under another producer name, registered the way a user
+    registers their own model rather than shipped in the package.
+    """
+
+    producer: str
+
+    def run(
+        self, inputs: Sequence[Design], output_dir: Path, **kwargs: Any
+    ) -> list[Design]:
+        produced = dummy_structures.run(inputs, output_dir, **kwargs)
+        return [replace(d, producer=self.producer) for d in produced]
+
+
+@pytest.fixture
+def second_fold_model():
+    REGISTRY[FOLD_B] = RelabelledFold(FOLD_B)
+    yield FOLD_B
+    del REGISTRY[FOLD_B]
+
+
+@pytest.fixture
+def sequences(tmp_path, target) -> list[Design]:
+    backbones = make_protein_backbones(
+        target, tmp_path / "bb", model_name=BB, num_designs=2
+    )
+    return design_sequences(backbones, tmp_path / "seqs", model_name=SEQ, num_seqs=1)
+
+
+def test_one_model_as_a_string_or_a_single_element_list_match(
+    tmp_path, sequences
+) -> None:
+    plain = predict_structure(sequences, tmp_path / "a", model_name=FOLD)
+    listed = predict_structure(sequences, tmp_path / "b", model_name=[FOLD])
+
+    assert [d.id for d in listed] == [d.id for d in plain]
+    assert [d.parent_id for d in listed] == [d.parent_id for d in plain]
+    assert [d.producer for d in listed] == [d.producer for d in plain]
+    assert [dict(d.scores) for d in listed] == [dict(d.scores) for d in plain]
+    assert [d.path.name for d in listed] == [d.path.name for d in plain]
+    # The run directory is the cache key, so equal keys mean the list form
+    # resolved to the same config and resumes the same run.
+    assert [d.meta["cache_key"] for d in listed] == [d.meta["cache_key"] for d in plain]
+
+
+def test_a_list_folds_every_sequence_with_every_model(
+    tmp_path, sequences, second_fold_model
+) -> None:
+    preds = predict_structure(
+        sequences, tmp_path / "fold", model_name=[FOLD, second_fold_model]
+    )
+
+    assert len(preds) == 2 * len(sequences)  # N sequences x M models
+    # Order follows the model list: the first model's predictions, then the second's.
+    assert [d.producer for d in preds] == (
+        [FOLD] * len(sequences) + [second_fold_model] * len(sequences)
+    )
+    # Each prediction keeps the sequence it was folded from, and one sequence is
+    # legitimately the parent of several predictions.
+    assert [d.parent_id for d in preds] == [d.id for d in sequences] * 2
+    assert len({d.id for d in preds}) == len(preds)
+    assert len({d.path for d in preds}) == len(preds)
+    assert all(d.path.is_file() for d in preds)
+
+
+def test_the_cache_is_per_model(tmp_path, sequences, second_fold_model) -> None:
+    first = predict_structure(sequences, tmp_path / "fold", model_name=FOLD)
+    assert all(d.meta["cached"] is False for d in first)
+
+    mixed = predict_structure(
+        sequences, tmp_path / "fold", model_name=[FOLD, second_fold_model]
+    )
+    # The model that already ran resumes; the one that has not still runs.
+    assert all(d.meta["cached"] for d in mixed if d.producer == FOLD)
+    assert not any(d.meta["cached"] for d in mixed if d.producer == second_fold_model)
+    assert [d.id for d in mixed if d.producer == FOLD] == [d.id for d in first]
+
+    again = predict_structure(
+        sequences, tmp_path / "fold", model_name=[FOLD, second_fold_model]
+    )
+    assert all(d.meta["cached"] for d in again)
+    assert [d.id for d in again] == [d.id for d in mixed]
+
+
+def test_an_empty_model_list_is_rejected(tmp_path, sequences) -> None:
+    with pytest.raises(ValueError, match="empty list"):
+        predict_structure(sequences, tmp_path / "fold", model_name=[])
+
+
+def test_a_repeated_model_is_rejected(tmp_path, sequences, second_fold_model) -> None:
+    with pytest.raises(ValueError) as exc:
+        predict_structure(
+            sequences, tmp_path / "fold", model_name=[FOLD, second_fold_model, FOLD]
+        )
+    assert FOLD in str(exc.value)
+
+
+def test_a_failing_model_in_a_list_raises_rather_than_returning_a_partial_result(
+    tmp_path, sequences
+) -> None:
+    with pytest.raises(UnknownModelError):
+        predict_structure(
+            sequences, tmp_path / "fold", model_name=[FOLD, "alphafold9000"]
+        )
 
 
 def test_a_different_seed_is_a_different_run(tmp_path, target) -> None:

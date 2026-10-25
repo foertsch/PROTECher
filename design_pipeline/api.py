@@ -112,22 +112,70 @@ def predict_structure(
     sequences: Sequence[Design],
     output_dir: PathLike = RUNS / "predictions",
     *,
-    model_name: str = "colabfold",
+    model_name: str | list[str] = "chai",
     seed: int = 0,
     cache: bool = True,
     extra_args: list[str] | None = None,
     **kwargs: Any,
 ) -> list[Design]:
-    """Fold designed sequences."""
-    return _run_step(
-        model_name=model_name,
-        inputs=list(sequences),
-        output_dir=output_dir,
-        seed=seed,
-        cache=cache,
-        extra_args=extra_args,
-        kwargs=kwargs,
-    )
+    """Fold designed sequences.
+
+    The default is Chai-1: permissively licensed for code and weights, where
+    ColabFold's AlphaFold2 weights are not. `colabfold`, `boltz` and
+    `protenix` are the other registered predictors; see the model table in
+    README.md for licences and MSA requirements.
+
+    `model_name` is one model or a list of them. A list folds the same
+    sequences with each named model in turn and concatenates the results, so N
+    sequences x M models gives N*M predictions: each keeps the sequence it was
+    folded from as `parent_id` (several predictions legitimately share one
+    parent) and names the model that made it in `producer`.
+
+    The models run one after another and the first failure propagates, so a
+    partial result is never returned. `**kwargs` and `extra_args` go to every
+    model in the list; a model that rejects an argument raises as well, and the
+    remedy there is one call per model, concatenated.
+
+    A list produces a mixed pool by default and models disagree on which
+    metrics they report, so `select` will ask you to filter to one producer.
+    """
+    predictions: list[Design] = []
+    for name in _model_names(model_name):
+        predictions.extend(
+            _run_step(
+                model_name=name,
+                inputs=list(sequences),
+                output_dir=output_dir,
+                seed=seed,
+                cache=cache,
+                extra_args=extra_args,
+                kwargs=kwargs,
+            )
+        )
+    return predictions
+
+
+def _model_names(model_name: str | list[str]) -> list[str]:
+    """The models to run, validated before any of them starts.
+
+    A plain string is the one-model case and stays indistinguishable from a
+    single-element list. Caching is per (model, inputs) already, because the
+    model is part of the resolved config, so a repeated name would run once
+    and hand back the same predictions twice.
+    """
+    if isinstance(model_name, str):
+        return [model_name]
+    names = list(model_name)
+    if not names:
+        raise ValueError("model_name is an empty list: name at least one model")
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+    if duplicates:
+        listed = ", ".join(repr(d) for d in duplicates)
+        raise ValueError(
+            f"model_name lists {listed} more than once; every model runs over the "
+            "same inputs, so a repeat would only duplicate its predictions"
+        )
+    return names
 
 
 def _run_step(

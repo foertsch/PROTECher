@@ -19,6 +19,10 @@ class MissingDependencyError(PipelineError):
     """An optional model dependency is not installed."""
 
 
+class MissingGPUError(PipelineError):
+    """No Linux host with a CUDA GPU, which the co-folding models require."""
+
+
 class MissingLigandError(PipelineError):
     """A ligand-conditioned model was asked to run on a structure with no ligand."""
 

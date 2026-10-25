@@ -9,9 +9,18 @@ import pytest
 from design_pipeline import Design, lineage, select, to_dataframe
 
 
-def make(id: str, parent: str | None = None, **scores: float) -> Design:
+def make(
+    id: str,
+    parent: str | None = None,
+    producer: str = "test",
+    **scores: float,
+) -> Design:
     return Design(
-        id=id, path=Path(f"{id}.pdb"), parent_id=parent, producer="test", scores=scores
+        id=id,
+        path=Path(f"{id}.pdb"),
+        parent_id=parent,
+        producer=producer,
+        scores=scores,
     )
 
 
@@ -93,6 +102,27 @@ def test_select_missing_score_names_the_design_and_the_keys() -> None:
     message = str(exc.value)
     assert "'b'" in message
     assert "plddt" in message
+
+
+def test_select_on_a_mixed_pool_points_at_filtering_by_producer() -> None:
+    """A `predict_structure` call with a list of models returns a mixed pool,
+    and the models do not report the same metrics."""
+    pool = [
+        make("a", producer="colabfold", pae_interaction=7.0),
+        make("b", producer="boltz", affinity=0.4),
+    ]
+    with pytest.raises(KeyError) as exc:
+        select(pool, 1, by="pae_interaction")
+    message = str(exc.value)
+    assert "producer" in message
+    assert "boltz" in message and "colabfold" in message
+
+
+def test_select_on_a_single_producer_pool_does_not_mention_filtering() -> None:
+    pool = [make("a", pae=1.0), make("b", plddt=80.0)]
+    with pytest.raises(KeyError) as exc:
+        select(pool, 1, by="pae")
+    assert "producer" not in str(exc.value)
 
 
 def test_to_dataframe_flattens_scores() -> None:

@@ -15,6 +15,12 @@ from typing import Any, Sequence
 
 from ..containers import make_id
 from ..designs import Design
+from ._folding import cif_to_pdb, work_dir
+from ._folding import write_scores_json as write_normalized_scores
+
+# Aliased on import: this module has its own write_scores_json, which writes
+# ColabFold's shape directly for DummyStructures, while DummyFold goes through
+# the shared normalizer the way the real co-folding adapters do.
 
 CHAIN_A = 10
 """Residues in the target chain."""
@@ -89,6 +95,119 @@ def write_scores_json(path: Path, token: str) -> dict[str, float]:
         "ptm": ptm,
         "iptm": iptm,
     }
+
+
+def write_cif(pdb: Path, cif: Path) -> Path:
+    """The PDB fixture again as mmCIF, which is what the co-folding tools write.
+
+    Here only so `DummyFold` can hand the real `cif_to_pdb` a real mmCIF: the
+    conversion is on the path of every prediction from those three models, and
+    stubbing it offline would leave it untested.
+    """
+    from biotite.structure.io import pdbx
+    from biotite.structure.io.pdb import PDBFile
+
+    structure = PDBFile.read(str(pdb)).get_structure(
+        model=1, extra_fields=["b_factor", "occupancy"]
+    )
+    out = pdbx.CIFFile()
+    pdbx.set_structure(out, structure)
+    out.write(str(cif))
+    return cif
+
+
+def write_raw_scores(path: Path, token: str) -> dict[str, Any]:
+    """A confidence file in a co-folding tool's own shape.
+
+    A fractional complex pLDDT and a token-pair PAE matrix, i.e. what Boltz and
+    Protenix write and what the adapters have to normalize. Deliberately not
+    ColabFold's shape: the normalization is the part worth testing.
+    """
+    n = CHAIN_A + CHAIN_B
+    plddt = [0.5 + 0.49 * _jitter(f"{token}:p:{i}") for i in range(n)]
+    pae = [
+        [
+            (3.0 if (i < CHAIN_A) == (j < CHAIN_A) else 12.0)
+            + 4.0 * _jitter(f"{token}:{i}:{j}")
+            for j in range(n)
+        ]
+        for i in range(n)
+    ]
+    payload = {
+        "complex_plddt": sum(plddt) / len(plddt),
+        "per_token_plddt": plddt,
+        "ptm": 0.5 + 0.4 * _jitter(f"{token}:ptm"),
+        "iptm": 0.3 + 0.5 * _jitter(f"{token}:iptm"),
+        "pae": pae,
+    }
+    path.write_text(json.dumps(payload))
+    return payload
+
+
+@dataclass(frozen=True)
+class DummyFold:
+    """Stands in for one of the co-folding adapters: Chai-1, Boltz-2, Protenix.
+
+    Writes an mmCIF and a tool-shaped confidence file into a directory per
+    input, then goes through the same `cif_to_pdb` and `write_scores_json` the
+    real adapters use. So the offline suite exercises the conversion and the
+    score normalization rather than stubbing them, and `producer` differs per
+    instance, which is what a mixed pool needs.
+    """
+
+    producer: str
+
+    def run(
+        self,
+        inputs: Sequence[Design],
+        output_dir: Path,
+        *,
+        extra_args: Sequence[str] | None = None,
+        seed: int = 0,
+        **kwargs: Any,
+    ) -> list[Design]:
+        designs: list[Design] = []
+        for sequence in inputs:
+            work = work_dir(output_dir, sequence)
+            token = f"{sequence.id}:{seed}"
+            # The real tools write mmCIF only, so the PDB this starts from is
+            # not left behind to be mistaken for the prediction.
+            staging = work / "staging.pdb"
+            write_pdb(staging, token=token, spread=1.2)
+            cif = write_cif(staging, work / f"{sequence.id}_model_0.cif")
+            staging.unlink()
+
+            raw_file = work / "raw_scores.json"
+            raw = write_raw_scores(raw_file, token=token)
+            pdb = cif_to_pdb(cif)
+            plddt = [100.0 * value for value in raw["per_token_plddt"]]
+            scores_json = write_normalized_scores(
+                work / f"{pdb.stem}_scores.json",
+                plddt=plddt,
+                pae=raw["pae"],
+                ptm=raw["ptm"],
+                iptm=raw["iptm"],
+            )
+            designs.append(
+                Design(
+                    id=make_id(pdb, output_dir),
+                    path=pdb,
+                    parent_id=sequence.id,
+                    producer=self.producer,
+                    scores={
+                        "plddt": 100.0 * raw["complex_plddt"],
+                        "ptm": raw["ptm"],
+                        "iptm": raw["iptm"],
+                    },
+                    meta={
+                        "cif": str(cif),
+                        "raw_scores": str(raw_file),
+                        "scores_json": str(scores_json),
+                        "seed": seed,
+                    },
+                )
+            )
+        return designs
 
 
 @dataclass(frozen=True)

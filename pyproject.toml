@@ -13,6 +13,17 @@ dependencies = [
 
 [project.optional-dependencies]
 # Container adapters (rfdiffusion, proteinmpnn) need no Python dependency at all.
+#
+# The four co-folding models are one extra each: all need Linux and a CUDA GPU,
+# they pin torch against each other, and a campaign uses one or two of them.
+# Chai-1 is the default. Its adapter calls run_inference in process (the CLI
+# drops the PAE matrix), so the minor is pinned.
+chai = ["chai_lab>=0.6,<0.7"]
+# Boltz-2. [cuda] is the tool's own GPU extra.
+boltz = ["boltz[cuda]>=2.2,<3"]
+# Pinned, not ranged: this is the version whose LICENSE and README the model
+# table in README.md reports, and the licensing of the weights is unresolved.
+protenix = ["protenix==2.0.0"]
 colabfold = ["colabfold[alphafold]>=1.5"]
 # ProteinMPNN / LigandMPNN / SolubleMPNN, parameters bundled in the wheel.
 # Heads-up: ligandmpnn 0.1.2 pins numpy==1.23.5, torch==2.2.1 and Python <3.12,
