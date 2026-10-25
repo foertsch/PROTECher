@@ -11,6 +11,13 @@ __pycache__/
 .venv/
 .env
 .ipynb_checkpoints/
+.idea
 
 # os
 .DS_Store
+
+# pipeline run outputs
+runs/
+
+# local code index
+.codegraph/

@@ -19,12 +19,16 @@ Focus areas are proposals, not assignments.
 ## Layout
 
 ```
-docs/        challenge notes and filtering strategy
-pipeline/    candidate generation (Kira)
-filters/     scoring and filtering code
-notebooks/   exploration
-data/        local only, git-ignored
+docs/             challenge notes and filtering strategy
+design_pipeline/  backbones, sequences, folding, scoring, selection (Kira)
+examples/         runnable scripts, e.g. the iterative refinement loop
+filters/          scoring and filtering code
+notebooks/        exploration
+data/             local only, git-ignored
 ```
+
+How to install the environment, the container images and the model weights, and
+how to run the pipeline: [INSTALL.md](INSTALL.md).
 
 ## Working rules
 
