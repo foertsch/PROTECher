@@ -1,0 +1,87 @@
+{
+ "run_id": "msa_batch_01",
+ "label": "batched-fold",
+ "created": "2026-10-30 13:28 UTC",
+ "code_commit": "34bf9ba",
+ "gpu_job_id": "411594",
+ "n_designs": 5,
+ "n_pass": 5,
+ "pass_rate": 1.0,
+ "n_with_warnings": 0,
+ "producers": [
+  "boltz"
+ ],
+ "seeds": [],
+ "groups": {
+  "test_a": 2,
+  "test_b": 2,
+  "parent": 1
+ },
+ "primary": {
+  "key": "iptm",
+  "label": "ipTM",
+  "better": "higher"
+ },
+ "parent_id": "wt_model_0-batch_a",
+ "metrics": {
+  "iptm": {
+   "label": "ipTM",
+   "better": "higher",
+   "target": 0.8,
+   "gate": 0.5,
+   "digits": 2,
+   "n": 5,
+   "median": 0.927126407623291,
+   "mean": 0.914373517036438,
+   "min": 0.8544259071350098,
+   "max": 0.9370681643486023,
+   "best": 0.9370681643486023,
+   "ok": 5,
+   "warn": 0,
+   "fail": 0,
+   "parent": 0.9370681643486023
+  },
+  "plddt": {
+   "label": "pLDDT",
+   "better": "higher",
+   "target": 85,
+   "gate": 80,
+   "digits": 1,
+   "n": 5,
+   "median": 91.87794327735901,
+   "mean": 91.87274694442749,
+   "min": 91.32819175720215,
+   "max": 92.20292568206787,
+   "best": 92.20292568206787,
+   "ok": 5,
+   "warn": 0,
+   "fail": 0,
+   "parent": 91.87794327735901
+  },
+  "ptm": {
+   "label": "pTM",
+   "better": "higher",
+   "target": 0.8,
+   "gate": null,
+   "digits": 2,
+   "n": 5,
+   "median": 0.9415324330329895,
+   "mean": 0.9354004859924316,
+   "min": 0.9048616886138916,
+   "max": 0.9477448463439941,
+   "best": 0.9477448463439941,
+   "ok": 5,
+   "warn": 0,
+   "fail": 0,
+   "parent": 0.9477448463439941
+  }
+ },
+ "verdict": "5/5 designs pass all gates \u00b7 best ipTM 0.94 \u00b7 parent 0.94 \u00b7 earlier best run msa_cache_01: 7/7",
+ "files": [
+  "report.md",
+  "designs.csv",
+  "summary.json",
+  "scatter.png",
+  "compare.png"
+ ]
+}
