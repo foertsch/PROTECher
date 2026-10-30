@@ -11,13 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from design_pipeline import (
+from design_pipeline.denovo import (
     design_sequences,
     make_protein_backbones,
     predict_structure,
-    score_designs,
-    select,
 )
+from design_pipeline.designs import select
+from design_pipeline.scoring import score_designs
 
 MODELS = {
     "bb": "dummy_backbones",

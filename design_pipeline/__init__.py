@@ -1,20 +1,32 @@
-"""design_pipeline: iterative protein design as five functions over `list[Design]`.
+"""design_pipeline: antibody affinity maturation as five functions over files.
 
     from design_pipeline import (
-        make_protein_backbones, design_sequences,
-        predict_structure, score_designs, select,
+        get_structure, enumerate_variants, score_variants, gate, select_pairs,
     )
 
-The round loop is a `for` statement in your own script, not a library feature.
-See examples/refine.py.
+    complex_ = get_structure("runs/her2_v1", pdb_id="1N8Z")
+    variants = enumerate_variants(complex_, chain="H")          # 4,598 rows
+    scores = score_variants(complex_, variants, models=["antifold", "esm_if"])
+    survivors = gate(scores, checks=["liabilities"])
+    pairs = select_pairs(survivors, max_pairs=20, min_distance=10.0)
+    pair_scores = score_variants(complex_, pairs, models=["antifold", "gearbind"])
+
+That is the whole surface. `score_variants` is called twice, on singles and on
+pairs, because a pair is an ordinary candidate - and nothing in this package
+estimates a pair's score by adding its singles' scores together.
+
+Everything is files on disk: the two artifact types, `Complex` and
+`VariantTable`, hold paths plus the config that produced them, and nothing is
+held in memory between steps. The round loop, if you want one, is a `for`
+statement in your own script.
 
 Importing this imports no model and no heavy dependency.
 """
 
 from __future__ import annotations
 
-from .api import design_sequences, make_protein_backbones, predict_structure
-from .designs import Design, Scores, lineage, select, to_dataframe
+from .api import gate, get_structure, score_variants
+from .denovo import diffuse_loops
 from .errors import (
     MissingDependencyError,
     MissingGPUError,
@@ -24,26 +36,29 @@ from .errors import (
     RunFailedError,
     UnknownModelError,
 )
+from .designs import Design
 from .registry import REGISTRY, ModelAdapter, get_adapter
-from .scoring import METRICS, score_designs
+from .structures import Complex
+from .variants import SCHEMA, VariantTable, enumerate_variants, select_pairs
 
 __all__ = [
     # the five steps
-    "make_protein_backbones",
-    "design_sequences",
-    "predict_structure",
-    "score_designs",
-    "select",
-    # the record
-    "Design",
-    "Scores",
-    "lineage",
-    "to_dataframe",
-    # swapping models out
+    "get_structure",
+    "enumerate_variants",
+    "score_variants",
+    "gate",
+    "select_pairs",
+    # the optional de novo branch
+    "diffuse_loops",
+    # the two artifact types
+    "Complex",
+    "VariantTable",
+    "SCHEMA",
+    # swapping models out: an adapter speaks Design
     "REGISTRY",
+    "Design",
     "ModelAdapter",
     "get_adapter",
-    "METRICS",
     # errors
     "PipelineError",
     "UnknownModelError",

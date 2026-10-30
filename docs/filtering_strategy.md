@@ -30,3 +30,15 @@ If the Adaptyv EGFR competition data is public, we can check which in-silico met
 ## Code layout
 
 Each stage lives in `filters/` as one function that takes a table of candidates and returns the same table with a pass flag and the metric values. Stages can then be reordered or dropped once the real metric is known.
+
+## What is already implemented
+
+Written as of 2026-10-30, in `design_pipeline` rather than in `filters/`, because the pipeline turned out to be affinity maturation from a known complex rather than de novo generation:
+
+- **Stage 4, developability** is the `gate` step. `liabilities` is pure sequence regex (new N-glycosylation sequon, deamidation, isomerization, fragmentation, introduced cysteine) and costs nothing; `netsolp`, `thermompnn` and `aggrescan3d` are container checks. Failures are dropped, never weighted against binding score, and the annotated table keeps every reason so a threshold can be re-tuned without re-running anything.
+- **Stage 1, the metric cut** is `score_variants`: one `score_<model>` column per scorer, joined on `variant_id`, never averaged. The open decision below — hard thresholds versus a weighted score — is deliberately left open in the code: there is no combined column and no default weights.
+- **Stage 2, cross-model agreement** is what several scorer columns on one table give you. Two inverse-folding models plus a supervised ddG model is three opinions on the same candidate.
+- **Calibration** is `design_pipeline.harness`: `run_systems` + `report` give Spearman and precision@10 per scorer per system against published affinity data (FLAb, AbBiBench, AB-Bind). That is where the stage weights should come from, rather than from a guess. It is the answer to this document's calibration section, and it works on measured antibody systems whether or not the Adaptyv data turns out to be downloadable.
+- **Stage 5, diversity** is partly `select_pairs`, which spreads pairs across the top of the ranking and enforces a minimum CA-CA separation rather than returning 20 variations on one position.
+
+Stages 3 (epitope) and 6 (specificity) are still manual, as this document says they should be.

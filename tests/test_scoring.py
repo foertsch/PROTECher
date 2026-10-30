@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from design_pipeline import (
-    Design,
+from design_pipeline import Design
+from design_pipeline.denovo import (
     design_sequences,
     make_protein_backbones,
     predict_structure,
-    score_designs,
 )
+from design_pipeline.scoring import score_designs
 from design_pipeline.adapters._dummy import CHAIN_A, CHAIN_B, write_pdb
 from design_pipeline.scoring import pae_interaction, sc_rmsd
 

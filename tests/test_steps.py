@@ -12,6 +12,8 @@ from design_pipeline import (
     REGISTRY,
     Design,
     UnknownModelError,
+)
+from design_pipeline.denovo import (
     design_sequences,
     make_protein_backbones,
     predict_structure,
