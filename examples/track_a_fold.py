@@ -24,6 +24,10 @@ parent first and the variants after it, one FASTA record each.
 
 Folding needs the cluster: Boltz-2 wants a CUDA GPU. `--dry-run` writes the
 inputs and stops, `--dummy` runs the fixture model offline.
+
+If the cluster is down or full, the folds run on Modal instead: `--dry-run` leaves
+`<out>/inputs/*.fa` in the form `cloud/modal_fold.py::fold_dir` reads, trimmed antigen
+included, and `fold_dir --seeds 5` folds them in parallel. See cloud/README.md.
 """
 
 from __future__ import annotations
@@ -173,11 +177,15 @@ def warnings_for(scfvs: Sequence[tuple[str, str]], antigen_length: int) -> list[
 def write_inputs(
     out: Path, scfvs: Sequence[tuple[str, str]], antigen: str, antigen_span: tuple[int, int]
 ) -> list[tuple[str, Path]]:
-    """One two-chain FASTA per scFv, plus the trimmed antigen for the record."""
+    """One two-chain FASTA per scFv in `inputs/`, and the trimmed antigen for the record beside it.
+
+    The record stays out of `inputs/` so that folder holds only complexes, which is what a batch fold reads
+    (`cloud/modal_fold.py::fold_dir` takes every `*.fa` in it as a design).
+    """
     inputs = out / "inputs"
     inputs.mkdir(parents=True, exist_ok=True)
     start, end = antigen_span
-    (inputs / "antigen_trimmed.fa").write_text(f">antigen_{start}-{end}\n{antigen}\n")
+    (out / "antigen_trimmed.fa").write_text(f">antigen_{start}-{end}\n{antigen}\n")
     written: list[tuple[str, Path]] = []
     seen: set[str] = set()
     for name, scfv in scfvs:

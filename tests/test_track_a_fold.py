@@ -104,7 +104,16 @@ def test_write_inputs_makes_one_two_chain_fasta_per_scfv(tmp_path: Path):
     written = fold.write_inputs(tmp_path, [("parent", SCFV), ("v 1", SCFV)], ANTIGEN, (1, 100))
     assert [name for name, _ in written] == ["parent", "v_1"]
     assert written[0][1].read_text() == f">parent\n{SCFV}:{ANTIGEN}\n"
-    assert (tmp_path / "inputs" / "antigen_trimmed.fa").read_text() == f">antigen_1-100\n{ANTIGEN}\n"
+    assert (tmp_path / "antigen_trimmed.fa").read_text() == f">antigen_1-100\n{ANTIGEN}\n"
+    assert sorted(p.name for p in (tmp_path / "inputs").iterdir()) == ["parent.fa", "v_1.fa"]  # only complexes in inputs/
+
+
+def test_the_inputs_are_the_files_the_batch_fold_on_modal_reads(tmp_path: Path):
+    """`cloud/modal_fold.py::fold_dir` stages every `*.fa` in a folder through msa_cache.remote.read_chains."""
+    from msa_cache.remote import read_chains
+
+    written = fold.write_inputs(tmp_path, [("parent", SCFV), ("v1", SCFV)], ANTIGEN, (1, 100))
+    assert [read_chains(path) for _, path in written] == [[SCFV, ANTIGEN], [SCFV, ANTIGEN]]
 
 
 def test_two_scfv_records_with_one_name_are_rejected(tmp_path: Path):

@@ -39,8 +39,10 @@ cluster is not reachable. For this parent it should report chain lengths `[242, 
 
 ## Tomorrow, if the cluster GPUs are busy
 
+This is the only Modal script in the repository, for every fold that has to leave the cluster.
+
 ```bash
-modal run cloud/modal_fold.py::fold_dir --designs DESIGNS_DIR --cache data/msa_candidates/trastuzumab_her2 --out runs/modal_01 --seed 0
+modal run cloud/modal_fold.py::fold_dir --designs DESIGNS_DIR --cache data/msa_candidates/trastuzumab_her2 --out runs/modal_01
 ```
 
 - `DESIGNS_DIR` holds one FASTA per design: `>id`, then `chain1:chain2`, as the pipeline writes them.
@@ -48,7 +50,25 @@ modal run cloud/modal_fold.py::fold_dir --designs DESIGNS_DIR --cache data/msa_c
   one of them, run `fetch` on its parent first.
 - A design that is too far from the parent's chains is refused before anything is uploaded, with its name.
 - The order of the designs changes each one's random draw. Pass `--order a,b,c` to fix it, otherwise it is alphabetical.
+- `--seeds N` folds seeds 0 to N-1, each in its own GPU container at the same time, so five seeds take about as long as
+  one and cost five times as much. Results go into `OUT/seed<k>/`, and the ipTM mean and SD per design are printed.
+  With the default `--seeds 1` the results go straight into `OUT`.
 - `PROTECHER_MODAL_GPU=H100` (or `A100-80GB`) picks another card. The default, L40S, is the one tested on the cluster.
+
+### Track A: the veto folds, several seeds, trimmed antigen
+
+The plan's structure veto folds the parent and the finalists against a trimmed antigen over at least five seeds.
+`examples/track_a_fold.py --dry-run` trims the antigen and writes one two-chain FASTA per scFv, which is the form
+`fold_dir` reads. The alignments come from the parent, once:
+
+```bash
+python examples/track_a_fold.py --scfv scfv.fasta --antigen antigen.fasta --antigen-region 480-607 --dry-run --out runs/veto
+modal run cloud/modal_fold.py::fetch --fasta runs/veto/inputs/PARENT.fa --out runs/veto/cache
+modal run cloud/modal_fold.py::fold_dir --designs runs/veto/inputs --cache runs/veto/cache --out runs/veto/modal --seeds 5
+```
+
+Replace `PARENT.fa` with the parent's file in `runs/veto/inputs/`. A variant whose scFv has changed too much from the
+parent's, or a different antigen fragment, is refused before the upload.
 
 ## Costs and cleanup
 
