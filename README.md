@@ -6,15 +6,13 @@ Event page: https://luma.com/4ogriih0
 
 ## Team
 
-| Name | Background | Proposed focus |
-|---|---|---|
-| Arion Förtsch | Bioinformatics, R, cluster work | Filtering logic, repo, submission |
-| Kira | ML engineer (Berlin), language and graph models, protein track at the last Future of Health hackathon | Generation pipeline |
-| Maria | MSc medical physics and computational science, UZH | Target biology, structure prep, epitope choice |
-| Iason | MSc physics, ETH; simulations and computer vision | Physics-based rescoring, compute setup |
-| Alixe | Life sciences engineering, EPFL; biosensing and neuroscience | Assay readouts (BLI/SPR), literature on known binders |
-
-Focus areas are proposals, not assignments.
+| Name | Background |
+|---|---|
+| Arion Förtsch | Bioinformatics, R, cluster work |
+| Kira | ML engineer (Berlin), language and graph models, protein track at the last Future of Health hackathon |
+| Maria | MSc medical physics and computational science, UZH |
+| Iason | MSc physics, ETH; simulations and computer vision |
+| Alixe | Life sciences engineering, EPFL; biosensing and neuroscience |
 
 ## Layout
 

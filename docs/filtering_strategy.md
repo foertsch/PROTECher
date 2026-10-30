@@ -43,7 +43,7 @@ Length: the public EGFR round-2 table has no expression failure under 100 residu
 
 ### Stage 1: structure confidence
 
-Per design, aggregate over seeds for the primary model (Boltz-2): rank value = median over seeds, gate value = minimum over seeds. Adaptyv scores a design once, and local reruns differ with hardware and seed (one team saw 0.79 locally and 0.86 officially, secondary report), so the gate has to hold in every seed we ran. This replaces "best of 3 or more seeds" from the first research summary **(decision, confirm with Kira)**. Run at least 3 seeds.
+Per design, aggregate over seeds for the primary model (Boltz-2): rank value = median over seeds, gate value = minimum over seeds. In `design_pipeline` terms, a design is the sequence that was folded (`parent_id` of the prediction), the model is `producer`, and the seed is `meta_seed` after `to_dataframe`. Each seed is a separate `predict_structure(..., seed=n)` call, and the seed is part of the cache key, so new seeds really rerun. Adaptyv scores a design once, and local reruns differ with hardware and seed (one team saw 0.79 locally and 0.86 officially, secondary report), so the gate has to hold in every seed we ran. This replaces "best of 3 or more seeds" from the first research summary **(decision, confirm with Kira)**. Run at least 3 seeds.
 
 Gates, all required:
 
