@@ -26,6 +26,7 @@ Importing this imports no model and no heavy dependency.
 from __future__ import annotations
 
 from .api import gate, get_structure, score_variants
+from .combine import frontier, pick_designs, propose_sets
 from .denovo import diffuse_loops
 from .errors import (
     MissingDependencyError,
@@ -48,6 +49,10 @@ __all__ = [
     "score_variants",
     "gate",
     "select_pairs",
+    # past pairs: sets of five or more, and the designs chosen from the scored sets
+    "propose_sets",
+    "pick_designs",
+    "frontier",
     # the optional de novo branch
     "diffuse_loops",
     # the two artifact types
