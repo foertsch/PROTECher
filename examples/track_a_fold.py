@@ -194,18 +194,28 @@ def write_inputs(
 def run_folds(
     inputs: Sequence[tuple[str, Path]], out: Path, model: str, seeds: Sequence[int]
 ) -> list:
-    """Fold every input once per seed. Reruns skip what the cache already holds."""
-    from design_pipeline import Design, predict_structure
+    """Fold every input once per seed with the named adapter, and tag each prediction with its seed.
 
+    The adapter is called directly through `get_adapter`, which the pipeline exports on both its
+    older and its current form, instead of through a pipeline step: a step records only the top
+    prediction's scores, and the veto needs the ipTM of every seed. There is no cache, so a rerun
+    folds again.
+    """
+    from dataclasses import replace
+
+    from design_pipeline import Design, get_adapter
+
+    adapter = get_adapter(model)
     designs = [
         Design(id=name, path=path, parent_id=None, producer="track_a_fold")
         for name, path in inputs
     ]
     predictions: list = []
     for seed in seeds:
-        predictions += predict_structure(
-            designs, out / "predictions", model_name=model, seed=seed
-        )
+        run_dir = out / "predictions" / f"seed{seed}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        for prediction in adapter.run(designs, run_dir, seed=seed):
+            predictions.append(replace(prediction, meta={**prediction.meta, "seed": seed}))
     return predictions
 
 

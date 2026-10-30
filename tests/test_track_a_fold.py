@@ -1,7 +1,7 @@
 """examples/track_a_fold.py: input handling offline, and the dummy fold end to end.
 
 The pure functions need nothing installed. The last two tests go through
-`predict_structure` with the `dummy_boltz` fixture, so they need the core
+`get_adapter` with the `dummy_boltz` fixture, so they need the core
 dependencies like the rest of the suite.
 """
 
