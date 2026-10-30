@@ -11,6 +11,7 @@ from design_pipeline.harness import (
     FIXTURE_SYSTEMS,
     SYSTEMS,
     System,
+    magnitude_plot,
     report,
     run_systems,
 )
@@ -46,6 +47,46 @@ def test_the_report_breaks_results_out_per_scorer(tmp_path: Path) -> None:
             ), f"{scorer} / {system} missing from the report"
     assert "spearman" in text and "p@5" in text
     assert "(mean)" in text  # per scorer, across systems
+
+
+def test_the_report_also_asks_whether_magnitude_predicts_effect_size(
+    tmp_path: Path,
+) -> None:
+    """The second table, and the question only the harness can answer: if a
+    mutation scoring twice as high does not bind twice as tightly, only the
+    ordering is usable and candidates have to be picked by rank."""
+    results = run_systems(models=["dummy_scorer"], output_dir=tmp_path / "harness")
+    text = report(results)
+
+    assert "score magnitude against measured effect size" in text
+    assert "r2" in text and "slope" in text
+    # Both tables, in one report: rank order first, then magnitude.
+    assert text.index("spearman") < text.index("score magnitude")
+
+
+def test_the_magnitude_plot_is_written_and_needs_no_display(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib", reason="the notebooks extra")
+    results = run_systems(models=["dummy_scorer"], output_dir=tmp_path / "harness")
+    out = tmp_path / "plots" / "magnitude.png"
+
+    figure = magnitude_plot(results, out)
+
+    assert out.is_file() and out.stat().st_size > 0
+    # One panel per score column.
+    assert len(figure.axes) >= 1
+
+
+def test_the_harness_statistics_are_the_ones_in_metrics(tmp_path: Path) -> None:
+    """The harness contains none of its own: a Spearman here and a Spearman in
+    a notebook plot have to be the same Spearman. Checked by reading the
+    source, because the failure mode is somebody inlining a mean."""
+    import design_pipeline.harness as harness
+
+    source = Path(harness.__file__).read_text()
+
+    assert "def _nanmean" not in source
+    for inlined in ("np.corrcoef", "np.polyfit", "scipy"):
+        assert inlined not in source, f"{inlined} belongs in metrics, not here"
 
 
 def test_a_scorer_with_no_skill_reports_a_correlation_near_zero(tmp_path) -> None:

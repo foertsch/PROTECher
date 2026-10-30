@@ -8,6 +8,7 @@
         output_dir="runs/harness",
     )
     print(report(results))
+    magnitude_plot(results, "runs/harness/magnitude.png")
 
 This is the single most important thing in the package. A campaign gets no
 feedback while it is running, so the only way to know which scorer to trust is
@@ -32,11 +33,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
+import numpy as np
+
 from ..adapters._scorers import DEFAULT_SCORERS
 from .. import metrics as _metrics
 from ..api import get_structure, score_variants
 from ..variants import enumerate_variants
-from ..metrics import precision_at_k, spearman, top_k_recall
+from ..metrics import (
+    magnitude_agreement,
+    nanmean,
+    precision_at_k,
+    score_columns,
+    scorer_name,
+    spearman,
+    top_k_recall,
+)
 from .systems import (
     FIXTURE_SYSTEMS,
     GROUND_TRUTH_ENV,
@@ -56,9 +67,11 @@ __all__ = [
     "HarnessResults",
     "run_systems",
     "report",
+    "magnitude_plot",
     "spearman",
     "precision_at_k",
     "top_k_recall",
+    "magnitude_agreement",
 ]
 
 MEASURED = "measured_affinity"
@@ -158,11 +171,10 @@ def run_systems(
                 "system": name,
                 "measured": len(frame),
                 **{
-                    f"spearman_{column[len('score_'):]}": spearman(
+                    f"spearman_{scorer_name(column)}": spearman(
                         frame[column], frame["oriented"]
                     )
-                    for column in frame.columns
-                    if column.startswith("score_") and not column.endswith("_raw")
+                    for column in score_columns(frame)
                 },
             },
         )
@@ -195,22 +207,27 @@ def _read_truth(path: Path) -> "pd.DataFrame":
 
 
 def report(results: HarnessResults, k: int = 10) -> str:
-    """Spearman and precision@k, per scorer and per system.
+    """Spearman and precision@k, per scorer and per system, then magnitudes.
 
     Per scorer, because choosing which column to trust is the entire point. The
     `(mean)` row averages each scorer's per-system correlations rather than
     pooling the rows: two assays do not share a scale, so a pooled correlation
     would mostly measure the gap between the systems.
 
+    The second table answers a different question from the first, and one that
+    only the harness can answer: whether score *magnitude* tracks effect size
+    or whether only the order does. A column with a good Spearman and a poor
+    r^2 ranks candidates correctly and scales badly, so its numbers cannot
+    carry a threshold - candidates have to be taken by rank. `magnitude_plot`
+    draws the same thing, which is the honest way to read it, because a
+    straight-line fit through a scatter that is not straight still returns a
+    slope.
+
     A blank cell is an honest NaN - too few measured variants, or a column the
     scorer declined to answer, as a positional model does for a double mutant.
     """
     frame = results.frame
-    columns = [
-        c
-        for c in frame.columns
-        if c.startswith("score_") and not c.endswith("_raw")
-    ]
+    columns = score_columns(frame)
     if not columns:
         return "no score columns in these results"
 
@@ -223,7 +240,7 @@ def report(results: HarnessResults, k: int = 10) -> str:
         "-" * 68,
     ]
     for column in columns:
-        scorer = column[len("score_") :]
+        scorer = scorer_name(column)
         correlations: list[float] = []
         precisions: list[float] = []
         recalls: list[float] = []
@@ -244,17 +261,118 @@ def report(results: HarnessResults, k: int = 10) -> str:
         if len(correlations) > 1:
             lines.append(
                 f"{scorer:<20}{'(mean)':<16}{'':>6}"
-                f"{_cell(_nanmean(correlations)):>10}"
-                f"{_cell(_nanmean(precisions)):>8}"
-                f"{_cell(_nanmean(recalls)):>8}"
+                f"{_cell(nanmean(correlations)):>10}"
+                f"{_cell(nanmean(precisions)):>8}"
+                f"{_cell(nanmean(recalls)):>8}"
             )
-    return "\n".join(lines)
+    return "\n".join([*lines, "", *_magnitude_lines(frame, columns)])
+
+
+def _magnitude_lines(frame: "pd.DataFrame", columns: Sequence[str]) -> list[str]:
+    """The magnitude table: does score size predict effect size, or only order?
+
+    Per system as well as per scorer, for the same reason the first table is:
+    the fit is in the assay's own units, and two assays pooled would be fitting
+    a line through two clouds.
+    """
+    lines = [
+        "score magnitude against measured effect size (rank-only = orders "
+        "well, scales badly)",
+        f"{'scorer':<20}{'system':<16}{'n':>6}{'pearson':>9}{'r2':>7}"
+        f"{'slope':>10}{'rank-only':>11}",
+        "-" * 79,
+    ]
+    for column in columns:
+        for system, group in frame.groupby("system", sort=True):
+            fit = magnitude_agreement(group[column], group["oriented"])
+            lines.append(
+                f"{scorer_name(column):<20}{system:<16}{int(fit['n']):>6}"
+                f"{_cell(fit['pearson']):>9}{_cell(fit['r2']):>7}"
+                f"{_cell(fit['slope']):>10}"
+                f"{('yes' if fit['rank_only'] else ''):>11}"
+            )
+    return lines
+
+
+def magnitude_plot(
+    results: HarnessResults,
+    path: Path | str | None = None,
+    *,
+    columns: Sequence[str] | None = None,
+):
+    """Scatter each scorer's column against the measured effect, with its fit.
+
+    The step-1 notebook asks whether confidence predicts structural accuracy.
+    This is the same question one step later and the one that decides how the
+    shortlist is cut: whether score magnitude predicts effect size, not just
+    rank order. If a mutation scoring twice as high does not bind twice as
+    tightly, only the ordering is usable and candidates are picked by rank
+    rather than by a threshold on the score.
+
+    It is a plot and not only a number on purpose. `magnitude_agreement`
+    reports a slope and an r^2 for every column, and a straight line through a
+    scatter that is flat at one end and vertical at the other reports a
+    perfectly respectable slope. The shape is the answer; the fit is a summary
+    of it.
+
+    One panel per score column, one marker colour per system, since the
+    measured values are in each assay's own units and must not be pooled.
+    Returns the matplotlib figure, and writes it to `path` when given.
+    Matplotlib is the `notebooks` extra, imported here so the rest of the
+    harness runs without it.
+    """
+    import matplotlib
+
+    matplotlib.use("Agg")  # a harness run is a script, not a session
+    import matplotlib.pyplot as plt
+
+    frame = results.frame
+    chosen = list(columns) if columns is not None else score_columns(frame)
+    if not chosen:
+        raise ValueError("no score columns in these results to plot")
+
+    width = min(4, len(chosen))
+    height = -(-len(chosen) // width)
+    figure, axes = plt.subplots(
+        height, width, figsize=(4.0 * width, 3.4 * height), squeeze=False
+    )
+    flat = [ax for row in axes for ax in row]
+    for ax, column in zip(flat, chosen):
+        fits: list[str] = []
+        for system, group in frame.groupby("system", sort=True):
+            points = ax.scatter(
+                group[column], group["oriented"], s=14, alpha=0.7, label=system
+            )
+            # One fit per system, in that system's colour. Not one line through
+            # everything: the measured values are in each assay's own units, so
+            # a pooled line would mostly be fitting the gap between two clouds.
+            fit = magnitude_agreement(group[column], group["oriented"])
+            if fit["slope"] == fit["slope"]:
+                x = np.linspace(group[column].min(), group[column].max(), 2)
+                ax.plot(
+                    x,
+                    fit["slope"] * x + fit["intercept"],
+                    lw=1,
+                    color=points.get_facecolor()[0],
+                )
+            fits.append(
+                f"{system} r2={_cell(fit['r2'])}"
+                f"{' rank-only' if fit['rank_only'] else ''}"
+            )
+        ax.set_title(f"{scorer_name(column)}\n" + "  ".join(fits), fontsize=8)
+        ax.set_xlabel("score")
+        ax.set_ylabel("measured (oriented)")
+        if frame["system"].nunique() > 1:
+            ax.legend(fontsize=7)
+    for ax in flat[len(chosen) :]:
+        ax.set_axis_off()
+    figure.tight_layout()
+    if path is not None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        figure.savefig(path, dpi=150)
+    return figure
 
 
 def _cell(value: float) -> str:
     return "" if value != value else f"{value:.3f}"
-
-
-def _nanmean(values: Sequence[float]) -> float:
-    usable = [v for v in values if v == v]
-    return sum(usable) / len(usable) if usable else float("nan")

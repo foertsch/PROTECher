@@ -25,8 +25,31 @@ dependencies = [
 # it the `imgt` column is empty and a warning says so; nothing else changes,
 # because every join in this package is on chain positions.
 numbering = ["anarci"]
-# Container adapters (the scorers, the gate checks, rfdiffusion) need no Python
-# dependency at all.
+# Sequence-only scorers: a protein language model scored by masked marginals.
+# These are the columns that stay meaningful when the predicted complex is
+# wrong, and they are the only extra here that pulls in torch.
+# `antiberty` is the optional antibody-specific alternative to `ablang2`;
+# skipping it costs one column.
+plm = ["torch>=2.0", "transformers>=4.40", "ablang2", "antiberty"]
+# Structure comparison, for the ground-truth half of design_pipeline.metrics.
+# DockQ is wrapped rather than reimplemented, and it brings biopython itself,
+# which is why biopython is not named here: nothing in this package imports it.
+# Imported lazily inside `dockq`, so the rest of the module - `interface_rmsd`,
+# `epitope_recall`, every diagnostic - still works on numpy and biotite alone.
+metrics = ["DockQ>=2.1"]
+# Plots: notebooks/01_structure_pipeline_validation.ipynb, and
+# `harness.magnitude_plot`. Both skip their plots rather than failing when
+# matplotlib is absent; the numbers behind them need nothing extra.
+notebooks = ["matplotlib>=3.8", "jupyterlab>=4"]
+# Scorers and gate checks are NOT all containers any more: most install with pip
+# or conda into one of the two environments described in INSTALL.md, and
+# design_pipeline/routes.py is the machine-readable table of which goes where.
+# `python -m design_pipeline.preflight` reports what resolves in this one.
+# RFdiffusion and GearBind are the only container adapters left.
+#
+# AntiFold deliberately has no extra here: it pins biotite==0.38 against this
+# package's biotite>=2.0, so it cannot share an environment. It is installed
+# separately and reached with executable= / DESIGN_PIPELINE_ANTIFOLD.
 #
 # The four co-folding models are one extra each: all need Linux and a CUDA GPU,
 # they pin torch against each other, and a campaign uses one or two of them.

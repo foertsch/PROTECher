@@ -1,4 +1,8 @@
-"""The pure-function metrics, against hand-computed fixtures."""
+"""The Category 1 metrics - the ones that need a known answer.
+
+Against hand-computed fixtures. The Category 2 diagnostics are in
+test_diagnostics.py, which is the same separation the module makes.
+"""
 
 from __future__ import annotations
 
@@ -212,45 +216,6 @@ def test_dockq_says_which_extra_to_install(reference) -> None:
 
 
 # --------------------------------------------------------------------------
-# Confidence
-# --------------------------------------------------------------------------
-
-
-def test_one_prediction_agrees_with_itself_and_says_nothing(reference) -> None:
-    assert metrics.seed_agreement([reference]) == (1.0, 1)
-
-
-def test_identical_seeds_form_one_cluster(reference, tmp_path) -> None:
-    copy = write_ca_pdb(tmp_path / "copy.pdb", FIXTURE_CHAINS, origins=DOCKED_ORIGINS)
-
-    assert metrics.seed_agreement([reference, copy]) == (1.0, 1)
-
-
-def test_a_split_ensemble_reports_the_dominant_fraction(
-    reference, wrong_pose, tmp_path
-) -> None:
-    """Two seeds on one pose and one on another: the fraction is the evidence,
-    and it is the one signal here that is not the model grading itself."""
-    second = write_ca_pdb(tmp_path / "second.pdb", FIXTURE_CHAINS, origins=DOCKED_ORIGINS)
-    fraction, clusters = metrics.seed_agreement([reference, second, wrong_pose])
-
-    assert clusters == 2
-    assert fraction == pytest.approx(2 / 3)
-
-
-def test_no_predictions_is_an_error() -> None:
-    with pytest.raises(ValueError, match="at least one"):
-        metrics.seed_agreement([])
-
-
-def test_the_decoy_gap_is_the_difference_and_nan_when_absent() -> None:
-    assert metrics.decoy_gap(0.8, 0.3) == pytest.approx(0.5)
-    assert metrics.decoy_gap(0.3, 0.8) == pytest.approx(-0.5)
-    assert math.isnan(metrics.decoy_gap(0.8, None))
-    assert math.isnan(metrics.decoy_gap(None, 0.3))
-
-
-# --------------------------------------------------------------------------
 # Ranking
 # --------------------------------------------------------------------------
 
@@ -290,6 +255,59 @@ def test_top_k_recall_is_a_shortlist_against_what_worked() -> None:
     # The two best measured are at indices 2 and 3; a shortlist of 4 catches both.
     assert metrics.top_k_recall(predicted, measured, k=4, n_true=2) == 1.0
     assert math.isnan(metrics.top_k_recall(predicted, measured, k=99, n_true=2))
+
+
+def test_the_mean_skips_nans_and_is_nan_when_there_are_only_nans() -> None:
+    assert metrics.nanmean([1.0, float("nan"), 3.0]) == pytest.approx(2.0)
+    assert math.isnan(metrics.nanmean([float("nan")]))
+    assert math.isnan(metrics.nanmean([]))
+
+
+def test_a_linear_scorer_agrees_in_magnitude_as_well_as_rank() -> None:
+    predicted = [1.0, 2.0, 3.0, 4.0, 5.0]
+    measured = [2.0, 4.0, 6.0, 8.0, 10.0]
+
+    fit = metrics.magnitude_agreement(predicted, measured)
+
+    assert fit["slope"] == pytest.approx(2.0)
+    assert fit["intercept"] == pytest.approx(0.0)
+    assert fit["r2"] == pytest.approx(1.0)
+    assert fit["rank_only"] is False
+
+
+def test_a_monotone_but_curved_scorer_is_flagged_rank_only() -> None:
+    """The question the harness exists to answer at step 3: this column orders
+    every candidate correctly and its magnitudes are meaningless, so the
+    shortlist has to be cut by rank and not by a threshold."""
+    predicted = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    measured = [1.0, 1.1, 1.2, 1.3, 1.4, 60.0]
+
+    fit = metrics.magnitude_agreement(predicted, measured)
+
+    assert fit["spearman"] == pytest.approx(1.0)
+    assert fit["pearson"] < 0.8
+    assert fit["rank_only"] is True
+
+
+def test_magnitude_agreement_is_nan_on_a_constant_column() -> None:
+    fit = metrics.magnitude_agreement([1.0, 1.0, 1.0], [1.0, 2.0, 3.0])
+
+    assert math.isnan(fit["slope"]) and math.isnan(fit["r2"])
+    assert fit["rank_only"] is False
+
+
+def test_score_columns_skip_the_raw_ones() -> None:
+    """A `_raw` column is the model's own sign convention, so correlating it
+    against anything would silently flip half an ensemble."""
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        columns=["variant_id", "score_esm_if", "score_esm_if_raw", "measured_affinity"]
+    )
+
+    assert metrics.score_columns(frame) == ["score_esm_if"]
+    assert metrics.scorer_name("score_esm_if") == "esm_if"
+    assert metrics.scorer_name("oriented") == "oriented"
 
 
 # --------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from design_pipeline import confidence, get_structure, metrics
+from design_pipeline.metrics import diagnostics
 from design_pipeline.adapters._pdb import FIXTURE_CHAINS
 
 ANTIBODY = f"{FIXTURE_CHAINS['H']}:{FIXTURE_CHAINS['L']}"
@@ -68,7 +69,7 @@ def test_the_ensemble_is_clustered_not_averaged(tmp_path) -> None:
     complex_ = predict(tmp_path, num_seeds=6)
 
     assert len(complex_.paths) == 6
-    fraction, clusters = metrics.seed_agreement(
+    fraction, clusters = diagnostics.seed_agreement(
         list(complex_.paths), ["H", "L"], ["A"]
     )
     assert complex_.confidence["dominant_cluster_fraction"] == pytest.approx(fraction)
