@@ -52,6 +52,9 @@ REGISTRY: dict[str, ModelAdapter] = {
     # complex, then a lookup per single mutation - then the per-variant ones,
     # which build and relax a structure per candidate.
     "antifold": adapters.antifold,
+    # Its whole-sequence counterpart: scores a candidate with several mutations
+    # as a whole. A separate column, since it differs from the lookup on a single.
+    "antifold_seq": adapters.antifold_seq,
     "esm_if": adapters.esm_if,
     "abmpnn": adapters.abmpnn,
     "proteinmpnn_score": adapters.proteinmpnn_score,
