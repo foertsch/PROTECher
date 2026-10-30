@@ -48,8 +48,8 @@ def write_batch_inputs(cache: MsaCache, designs: Sequence, inputs_dir: Path | st
         for k, msa in enumerate(msas):
             if msa is None:
                 raise CacheError(
-                    f"design {design.id}: chain {k + 1} is not within {cache.max_mismatch_fraction:.0%} "
-                    "substitutions of the parent's chain of the same length. Build a cache for this "
+                    f"design {design.id}: chain {k + 1} does not fit a stretch of the parent's chain within "
+                    f"{cache.max_mismatch_fraction:.0%} differing residues. Build a cache for this "
                     "antibody, or fold this design on its own with use_cached_msas(fallback='server')."
                 )
         plan.append((design.id, chains, msas))
