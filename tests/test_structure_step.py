@@ -82,6 +82,7 @@ def test_sequences_are_written_to_a_fasta_for_a_predictor(tmp_path) -> None:
     get_structure(
         tmp_path / "runs",
         model_name="dummy_structures",
+        confidence=False,
         antibody_seq="EVQLVE:DIQMTQ",
         antigen_seq="TQVCTG",
     )
@@ -152,7 +153,8 @@ def test_a_fasta_on_disk_replaces_the_sequence_arguments(tmp_path) -> None:
     source = tmp_path / "my_complex.fasta"
     source.write_text(">heavy\nEVQLVE\n>light\nDIQMTQ\n>antigen\nTQVCTG\n")
 
-    get_structure(tmp_path / "runs", model_name="dummy_structures", fasta=source)
+    get_structure(tmp_path / "runs", model_name="dummy_structures",
+        confidence=False, fasta=source)
 
     normalised = tmp_path / "runs" / "inputs" / "complex.fasta"
     assert normalised.read_text().splitlines()[1] == "EVQLVE:DIQMTQ:TQVCTG"
@@ -165,11 +167,13 @@ def test_a_fasta_and_the_sequence_arguments_agree_on_one_input(tmp_path) -> None
     source.write_text(">complex\nEVQLVE:DIQMTQ:TQVCTG\n")
 
     from_file = get_structure(
-        tmp_path / "a", model_name="dummy_structures", fasta=source
+        tmp_path / "a", model_name="dummy_structures",
+        confidence=False, fasta=source
     )
     from_args = get_structure(
         tmp_path / "b",
         model_name="dummy_structures",
+        confidence=False,
         antibody_seq="EVQLVE:DIQMTQ",
         antigen_seq="TQVCTG",
     )
@@ -194,6 +198,7 @@ def test_sequences_and_a_fasta_together_are_refused(tmp_path) -> None:
         get_structure(
             tmp_path / "runs",
             model_name="dummy_structures",
+        confidence=False,
             fasta=source,
             antibody_seq="EVQLVE",
         )
@@ -212,7 +217,8 @@ def test_sequences_handed_to_the_download_adapter_say_so(tmp_path) -> None:
 def test_a_structure_handed_to_fasta_is_caught(tmp_path, structure) -> None:
     with pytest.raises(ValueError, match="holds no FASTA records"):
         get_structure(
-            tmp_path / "runs", model_name="dummy_structures", fasta=structure
+            tmp_path / "runs", model_name="dummy_structures",
+        confidence=False, fasta=structure
         )
 
 

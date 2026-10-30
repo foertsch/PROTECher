@@ -1,12 +1,24 @@
 # Installing and running `design_pipeline`
 
 Affinity maturation in five functions, each model swappable by name. The core
-package is small and pure Python; the models run in containers or as an
-optional extra, so you install only what you intend to run.
+package is small and pure Python; the models install into one of two
+environments, or into the single container that genuinely needs one, so you
+install only what you intend to run.
 
 Order matters: do step 1 and 2 on your laptop first. They need no GPU, no
 Docker and no network, and they tell you the package works before you start
 fighting with CUDA.
+
+At any point, in any environment:
+
+```bash
+python -m design_pipeline.preflight
+```
+
+prints one row per adapter — step, which environment it belongs to, whether it
+resolves here, and what was probed — and exits non-zero when a model the
+default campaign needs is missing. Run it in each environment before the event.
+It imports nothing for real and pulls nothing, so it is safe on a login node.
 
 ---
 
@@ -49,6 +61,92 @@ column is empty and a warning says so once; nothing else changes, because every
 join in this package is on chain positions. IMGT labels matter when you want a
 result to carry across antibodies.
 
+### Two environments and one container
+
+Models do not all fit together, so they do not all go in one place. There are
+three places, and `design_pipeline/routes.py` is the machine-readable version
+of this table — the errors and `preflight` both read it.
+
+| | holds | why |
+|---|---|---|
+| **Env A** | this package, `ablang2`, `antiberty`, `transformers` + `torch`, `fair-esm`, `anarci` | the sequence-only scorers and the whole table/gating path. Build and test this first. |
+| **Env B** | `antifold`, `thermompnn`, and the co-folding models (`chai`, `boltz`, `protenix`, `colabfold`) | each pins torch against the others, and AntiFold pins `biotite==0.38` |
+| **container** | `gearbind` | TorchDrug pins Python ≤3.10 and an old torch: the one conflict a second environment cannot fix |
+| **container** | `rfdiffusion` | it already had a published image; pinned by digest |
+
+"Env B" is one label for several possible environments. Each of its models is
+reached by its own path, so whether AntiFold and ThermoMPNN actually share one
+mamba environment is a question for the dry run — their pins may force two.
+Nothing in the code assumes either way; that is what `executable=` is for.
+
+Adapters in another environment are reached by path, not by import — the
+pipeline shells out:
+
+```python
+score_variants(complex_, variants, models=["antifold"],
+               executable="/opt/envs/antifold/bin/python")
+# or, once, for the whole session:
+export DESIGN_PIPELINE_ANTIFOLD=/opt/envs/antifold/bin/python
+export DESIGN_PIPELINE_THERMOMPNN=/opt/envs/thermompnn/bin/thermompnn
+```
+
+#### AntiFold cannot go in Env A
+
+`pip install antifold` pins `torch==2.3.1`, `torch-geometric==2.4.0`,
+`biotite==0.38`, `biopython==1.83` and `numpy==1.26.*`. This package needs
+`biotite>=2.0`, because biotite 2.0 changed `superimpose()` and the scoring
+relies on the new signature. Checked on 2026-10-30:
+
+```
+$ pip install --dry-run "biotite>=2.0" "numpy>=1.26" antifold
+ERROR: Cannot install antifold==0.2.0, antifold==0.2.1, antifold==0.2.2,
+antifold==0.2.3, antifold==0.3.0, antifold==0.3.1 and biotite>=2.0 because
+these package versions have conflicting dependencies.
+ERROR: ResolutionImpossible
+```
+
+That is every published version of AntiFold. So it gets its own environment and
+is invoked by path. It is still in `DEFAULT_SCORERS`, which means a default
+`score_variants` call needs Env B configured — decide whether that is what you
+want before the event.
+
+#### ESM-IF, resolved empirically
+
+Two separate questions, two different answers. The pure-Python part resolves
+into Env A with no conflict:
+
+```
+$ pip install --dry-run "biotite>=2.0" fair-esm torch-geometric
+Would install biotite-2.0.0 fair-esm-2.0.0 torch-geometric-2.8.1 numpy-2.5.4
+  scipy-1.18.1 networkx-3.7 ... (no conflict)
+```
+
+`torch-scatter` does not:
+
+```
+$ pip install --dry-run "biotite>=2.0" fair-esm torch-geometric torch-scatter
+  File "<string>", line 8, in <module>
+ModuleNotFoundError: No module named 'torch'
+error: subprocess-exited-with-error
+Getting requirements to build wheel did not run successfully.
+```
+
+It ships no wheel for current torch, so pip builds it from the sdist, and its
+`setup.py` imports `torch` at build time inside an isolated build environment
+where torch is not present. It cannot be installed in the same `pip install` as
+torch. The sequence that works is two steps, and needs a C++ compiler (plus the
+CUDA toolkit for GPU support):
+
+```bash
+pip install torch                     # first, on its own
+pip install torch-scatter --no-build-isolation
+```
+
+Note also what this does *not* establish: `fair-esm` installing is not ESM-IF
+running. ESM-IF is a Python API with no command line, so this package has no
+verified way to invoke it, and the `esm_if` adapter says exactly that rather
+than shelling out to a command nobody has checked.
+
 ---
 
 ## 2. Check it works, with no GPU and no Docker
@@ -82,7 +180,10 @@ the environment, not the code.
 
 ---
 
-## 3. Container runtime (for the scorers, the gate checks and RFdiffusion)
+## 3. Container runtime (for RFdiffusion and GearBind only)
+
+Two adapters use a container. Everything else installs into Env A, B or C,
+so you can skip this section entirely for a scoring-and-gating campaign.
 
 You need **either** apptainer or docker. The adapter detects which is present
 and prefers apptainer, because that is the one shared clusters allow.
@@ -114,25 +215,26 @@ both options rather than failing somewhere deep in a subprocess.
 
 ---
 
-## 4. Model images and weights
+## 4. Model routes and weights
 
-### RFdiffusion — weights ship inside the image
+### RFdiffusion — the one published image, pinned by digest
 
-The adapter uses image `rosettacommons/rfdiffusion` and passes
-`inference.model_directory_path=/app/RFdiffusion/models`, which is where the
-weights live inside that image. Nothing to download separately.
+Checked on Docker Hub on 2026-10-30: `rosettacommons/rfdiffusion` exists and
+has exactly one tag, `latest`, 8.1 GB, pushed 2025-06-25. The adapter pins the
+digest that tag pointed at rather than the tag itself, because a tag that moves
+under a campaign changes the scores without changing the config, and the cache
+key would not notice. The pin lives in `design_pipeline/routes.py` as
+`RFDIFFUSION_IMAGE`.
+
+The adapter passes `inference.model_directory_path=/app/RFdiffusion/models`,
+which is where the weights live inside that image. Nothing to download
+separately.
 
 ```bash
-docker pull rosettacommons/rfdiffusion
+docker pull rosettacommons/rfdiffusion@sha256:b88dc5d7ccd166557fb9b922bbaeb15bdf8d0568907c50405a8bf282e67254fe
 # apptainer pulls on first use and caches it; to pre-pull:
-apptainer pull docker://rosettacommons/rfdiffusion
+apptainer pull docker://rosettacommons/rfdiffusion@sha256:b88dc5d7ccd166557fb9b922bbaeb15bdf8d0568907c50405a8bf282e67254fe
 ```
-
-> **Verify this image name before the event.** It comes from our brief, not
-> from a pull we have done. RFdiffusion's repository ships a `Dockerfile` you
-> are expected to build yourself, and the weights are downloaded by a script
-> rather than baked in. If the pull above 404s, build it locally and point the
-> adapter at your image — see *Overriding an adapter* below.
 
 Set a big cache dir if `$HOME` is small, which it usually is on a cluster:
 
@@ -267,23 +369,54 @@ colabfold_batch --help
 If `colabfold_batch` is not on `PATH`, the pipeline raises
 `MissingDependencyError` naming the extra to install.
 
-### Scorer and gate images
+### Scorers and gate checks — routes, not images
 
-Every scorer except `consensus` and every gate check except `liabilities` runs
-in a container, which is why they add no Python dependency. Each adapter is
-plain data, so the image name, the flag the candidates CSV arrives on, and the
-column the result is read from are all overridable without touching this
-package:
+**This package ships no container image names except RFdiffusion's.** An
+earlier version of this file claimed the registry held "the published ones
+where a published one exists". That was wrong: ten adapters named ten images,
+and when they were checked against the Docker Hub API on 2026-10-30, eight of
+the ten returned 404. The names were GitHub `org/repo` slugs used as registry
+paths. A default that 404s is worse than no default, because it fails inside
+`docker pull` with a registry error instead of telling you what to install.
+
+What each one actually needs, and whether we have checked it:
+
+| adapter | where | route | checked |
+|---|---|---|---|
+| `antifold` | Env B | `pip install antifold` (PyPI 0.3.1, BSD-3; weights download on first run) | yes |
+| `esm_if` | Env A | `pip install fair-esm` + `torch-geometric` + `torch-scatter` — but no CLI exists to invoke | route yes, invocation no |
+| `ablang2` | Env A | `pip install ablang2` | yes |
+| `esm1v`, `esm2_650m` | Env A | `pip install 'design-pipeline[plm]'` | yes |
+| `antiberty` | Env A | `pip install antiberty` | no |
+| `consensus`, `liabilities` | — | bundled; `consensus` needs an OAS table | yes |
+| `thermompnn` | Env B | `git clone https://github.com/Kuhlman-Lab/ThermoMPNN`, build its `environment.yaml` with mamba | yes |
+| `gearbind` | container | build from `https://github.com/DeepGraphLearning/GearBind`; no published image | yes |
+| `rosetta_ddg` | manual | licence-gated. An official `rosettacommons/rosetta` image does exist (23 tags) but is not configured here | yes |
+| `foldx` | manual | licence-gated; your own image | yes |
+| `alphafold3` | manual | weights from DeepMind on request; your own image | yes |
+| `aggrescan3d`, `netsolp`, `abmpnn`, `proteinmpnn_score` | — | **no route established.** These carried invented image names and nothing replaces them | no |
+
+AbMPNN has no public repository and its weights are request-gated, so there is
+nothing to install at all today.
+
+An adapter whose tool is not present raises `MissingRuntimeError` quoting its
+route verbatim. An adapter with no route says that instead of guessing one —
+and `preflight` marks an unchecked route as such, so the table never implies
+more than was actually verified.
+
+To wire one up once you have built it, each adapter is plain data, so the image
+name, the flag the candidates CSV arrives on, and the column the result is read
+from are all overridable without touching this package:
 
 ```python
 from dataclasses import replace
 from design_pipeline import REGISTRY
 from design_pipeline.adapters import _scorers
 
-REGISTRY["antifold"] = replace(
-    _scorers.antifold,
-    container=replace(_scorers.antifold.container, image="ghcr.io/ourlab/antifold:2.1"),
-    value_column="log_odds",
+REGISTRY["gearbind"] = replace(
+    _scorers.gearbind,
+    tool=_scorers.matrix_container("ghcr.io/ourlab/gearbind:1.0"),
+    value_column="ddg_pred",
 )
 ```
 
@@ -294,11 +427,10 @@ score_variants(complex_, variants, models=["antifold"],
                id_column="mutation", value_column="llr")
 ```
 
-The images in the registry are the published ones where a published one exists
-and the lab's own build where it does not (`foldx` needs a licence,
-`alphafold3` needs weights DeepMind distributes separately). Verify the name
-before assuming a pull will work; a 404 means build it locally and override as
-above.
+The registry holds no image names of its own, so there is nothing here to
+verify before a pull: the only image this package names is RFdiffusion's,
+pinned by digest. Every other container is one you build and set yourself, by
+the override above.
 
 The adapter contract is small enough to wrap anything: the container is handed
 a structure, a `candidates.csv` of `variant_id,chain,position,wt,mut`, and an

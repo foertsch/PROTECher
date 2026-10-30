@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from ..containers import ContainerAdapter, make_id
+from ..routes import require
 from ..designs import Design
 from ..errors import RunFailedError
 from ._folding import cif_to_pdb, fasta_chains
@@ -70,7 +71,10 @@ class AlphaFold3Adapter:
     """Satisfies the ModelAdapter Protocol; the container work is delegated."""
 
     name: str = "alphafold3"
-    image: str = "alphafold3"
+    image: str | None = None
+    """No default: the weights come from DeepMind on request and the image is
+    your own build, so there is no name this package could ship. `run` raises
+    with that route until you set one."""
     model_dir: str = "/root/models"
     db_dir: str = "/root/public_databases"
     aliases: Mapping[str, str] = field(default_factory=dict)
@@ -92,6 +96,8 @@ class AlphaFold3Adapter:
                 "them to a FASTA from antibody_seq / antigen_seq, or from the "
                 "one you pass as fasta="
             )
+        if self.image is None:
+            require(self.name)
         fasta = inputs[0]
         name, chains = fasta_chains(fasta.path)
         json_path = write_input_json(

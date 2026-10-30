@@ -31,9 +31,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from ..containers import ContainerAdapter, make_id
+from ..containers import ContainerAdapter, ProcessAdapter, make_id
 from ..designs import Design
-from ..errors import MissingDependencyError, RunFailedError
+from ..errors import MissingDependencyError, MissingRuntimeError, RunFailedError
+from ..routes import require
 from ._tabular import (
     CANDIDATES,
     SCORES,
@@ -48,16 +49,21 @@ PER_VARIANT = "per_variant"
 
 @dataclass(frozen=True)
 class ContainerScorer:
-    """A scoring container plus the three facts needed to read it back.
+    """An external scoring tool plus the three facts needed to read it back.
 
-    The container itself is an ordinary `ContainerAdapter` - same runtime
-    detection, same mounts, same GPU flags - configured with the candidates CSV
-    as a path kwarg so it is bind-mounted and rewritten like any other input
-    file. This class only normalizes the output.
+    The tool itself is an ordinary `ContainerAdapter` or `ProcessAdapter` -
+    same argument assembly either way - configured with the candidates CSV as a
+    path kwarg so it is mounted and rewritten like any other input file. This
+    class only normalizes the output.
+
+    `tool` is None for a scorer this package cannot yet invoke: no published
+    image and no verified command line. It is not a guess at one. `run` then
+    raises out of `routes`, naming the install route if there is one and saying
+    there is none if there is not.
     """
 
     name: str
-    container: ContainerAdapter
+    tool: ContainerAdapter | ProcessAdapter | None = None
     sign: float = 1.0
     """+1 when the tool already scores higher-is-better-binding, -1 for a
     ddG-style number where negative is the improvement."""
@@ -81,7 +87,19 @@ class ContainerScorer:
     ) -> list[Design]:
         if candidates is None:
             raise ValueError(f"{self.name} needs candidates=<path to {CANDIDATES}>")
-        produced = self.container.run(
+        if self.tool is None:
+            # Raises when the tool is absent, naming the route. If it is
+            # present, the gap is ours rather than the environment's, and
+            # saying which is the whole point of this branch.
+            require(self.name)
+            raise MissingRuntimeError(
+                f"{self.name} is installed, but this package has no verified "
+                f"way to invoke it - it exposes a Python API rather than a CLI, "
+                f"or its result format has not been checked. Set "
+                f"REGISTRY[{self.name!r}] to an adapter that runs it; "
+                f"`python -m design_pipeline.preflight` prints the table."
+            )
+        produced = self.tool.run(
             inputs,
             output_dir,
             candidates=str(candidates),
@@ -288,7 +306,7 @@ class DummyScorer:
         ]
 
 
-def _matrix_container(
+def matrix_container(
     image: str,
     *,
     mutations_flag: str = "mutations_csv",
@@ -298,9 +316,19 @@ def _matrix_container(
 ) -> ContainerAdapter:
     """A scoring image: structure in, candidates CSV in, CSV out.
 
+    Public because this package no longer ships image names - every scorer
+    below that needs a container has `tool=None` - so building one is the
+    caller's job:
+
+        REGISTRY["gearbind"] = replace(
+            _scorers.gearbind,
+            tool=_scorers.matrix_container("ourlab/gearbind:1.0"),
+        )
+
     `per_input=True` with exactly one input - the structure - so the container
     layer mounts the structure's directory, the candidates CSV's directory and
-    the run directory, and nothing else.
+    the run directory, and nothing else. The flags below are this package's
+    convention, not any tool's: override them for the image you built.
     """
     return ContainerAdapter(
         image=image,
@@ -315,13 +343,33 @@ def _matrix_container(
     )
 
 
+# AntiFold is the one scorer here whose command line we have checked, against
+# the CLI its own README documents: --pdb_file, --out_dir, the chain flags.
+# It takes no candidates CSV, because it writes per-residue log-likelihoods for
+# the whole chain in one pass - which is what makes it a matrix scorer.
+#
+# It cannot live in Env A. `pip install antifold` pins biotite==0.38, torch
+# ==2.3.1 and numpy==1.26.*, and this package needs biotite>=2.0; pip calls
+# that combination ResolutionImpossible. So it runs out of its own environment
+# and `executable=` (or DESIGN_PIPELINE_ANTIFOLD) is how you point at it.
+antifold_process = ProcessAdapter(
+    tool="antifold",
+    executable="python",
+    command=("-m", "antifold.main"),
+    env_var="DESIGN_PIPELINE_ANTIFOLD",
+    input_template=("--pdb_file", "{path}"),
+    output_template=("--out_dir", "{path}"),
+    output_globs=("*.csv",),
+)
+
+
 # Matrix scorers. One forward pass over the complex, then a lookup per single
 # mutation; a multi-mutation candidate is re-run conditioned on the full mutant
 # sequence, which is the tool's business and the reason the candidates CSV
 # carries every mutation of every id.
 antifold = ContainerScorer(
     name="antifold",
-    container=_matrix_container("biolib/antifold"),
+    tool=antifold_process,
     # AntiFold reports a log-likelihood ratio against the wild type: already
     # higher-is-better.
     sign=1.0,
@@ -330,17 +378,19 @@ esm_if = ContainerScorer(
     name="esm_if",
     # ESM-IF is also pip-installable, but only alongside torch; the container
     # keeps torch out of this environment. The in-process variant is skipped.
-    container=_matrix_container("facebookresearch/esm-if1"),
+    # fair-esm installs, but ESM-IF is a Python API with no command line, so
+    # there is nothing to shell out to. Wiring one would mean inventing it.
+    tool=None,
     sign=1.0,
 )
 abmpnn = ContainerScorer(
     name="abmpnn",
-    container=_matrix_container("oxpig/abmpnn"),
+    tool=None,
     sign=1.0,
 )
 proteinmpnn_score = ContainerScorer(
     name="proteinmpnn_score",
-    container=_matrix_container("dauparas/proteinmpnn"),
+    tool=None,
     sign=1.0,
 )
 consensus = ConsensusScorer()
@@ -348,7 +398,9 @@ consensus = ConsensusScorer()
 # Per-variant scorers. A mutant structure built and relaxed per candidate.
 gearbind = ContainerScorer(
     name="gearbind",
-    container=_matrix_container("deepgraphlearning/gearbind"),
+    # The one genuine environment conflict in the set, so this is the one
+    # scorer that should be a container. Build it and set the image.
+    tool=None,
     # A predicted ddG of binding: negative is the improvement.
     sign=-1.0,
     per_variant=True,
@@ -356,11 +408,8 @@ gearbind = ContainerScorer(
 )
 rosetta_ddg = ContainerScorer(
     name="rosetta_ddg",
-    container=_matrix_container(
-        "rosettacommons/rosetta",
-        gpu=False,
-        command=("rosetta_scripts.linuxgccrelease",),
-    ),
+    # Licence-gated and deliberately not automated.
+    tool=None,
     sign=-1.0,
     per_variant=True,
     value_column="ddg",
@@ -368,7 +417,7 @@ rosetta_ddg = ContainerScorer(
 foldx = ContainerScorer(
     name="foldx",
     # FoldX weights and binary are licensed; the image is the user's own build.
-    container=_matrix_container("local/foldx", gpu=False),
+    tool=None,
     sign=-1.0,
     per_variant=True,
     value_column="ddg",
@@ -397,6 +446,22 @@ PER_VARIANT_SCORERS: tuple[str, ...] = (
     "foldx",
     "dummy_per_variant",
 )
-DEFAULT_SCORERS: tuple[str, ...] = ("antifold", "esm_if", "consensus")
-"""What `score_variants` runs when nothing is named: the cheap set, AntiFold
-first because it is the antibody-specific one."""
+DEFAULT_SCORERS: tuple[str, ...] = ("antifold", "ablang2", "consensus")
+"""What `score_variants` runs when nothing is named.
+
+Three columns that disagree by construction - structure-based, sequence-based,
+frequency-based - and all three install into one environment:
+
+* `antifold`   inverse folding on the complex: the only one that has seen the
+               interface at all.
+* `ablang2`    a paired-antibody language model: the only one that knows what
+               an antibody is allowed to look like at a framework position.
+* `consensus`  positional repertoire frequencies: no model, free, and
+               uncorrelated with both of the above.
+
+`esm_if` is deliberately not here. It is a Python API with no command line,
+`torch-scatter` needs a compiler and `--no-build-isolation` to install, and
+published benchmarks put it below AntiFold on antibody affinity ranking - so
+the install cost buys a column we would trust less. The adapter and its route
+stay, for anyone who wants it.
+"""

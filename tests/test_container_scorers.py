@@ -7,6 +7,7 @@ normalized so `score` always means better binding.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,21 @@ from design_pipeline.adapters._tabular import (
     SCORES,
     write_candidates,
 )
+
+
+def scorer(adapter, image="test/scorer", *, gpu=True):
+    """A shipped scorer with an image attached, for a boundary test.
+
+    The registry ships no image names any more - every containerised scorer has
+    `tool=None` until you build one and set it - so a test of the container
+    boundary has to supply the image the way a user does.
+    """
+    return replace(adapter, tool=_scorers.matrix_container(image, gpu=gpu))
+
+
+def check(adapter, image="test/check", *, gpu=True):
+    """The same, for a gate check."""
+    return replace(adapter, tool=_gates.check_container(image, gpu=gpu))
 
 
 @pytest.fixture
@@ -72,7 +88,7 @@ def test_a_ddg_scorer_is_flipped_so_higher_is_better(
         ),
     )
 
-    produced = _scorers.gearbind.run([structure], out, candidates=candidates)
+    produced = scorer(_scorers.gearbind).run([structure], out, candidates=candidates)
     rows = dict(
         line.split(",")[:2]
         for line in produced[0].path.read_text().splitlines()[1:]
@@ -99,7 +115,7 @@ def test_the_candidates_csv_reaches_the_container_as_a_mounted_path(
         lambda n: (out / "antifold.csv").write_text("variant_id,score\nH:T30Y,0.2\n"),
     )
 
-    _scorers.antifold.run([structure], out, candidates=candidates)
+    scorer(_scorers.antifold).run([structure], out, candidates=candidates)
     command = calls[0]
 
     assert "docker" in command[0]
@@ -121,7 +137,7 @@ def test_a_candidate_the_tool_skipped_is_no_score_rather_than_a_zero(
         lambda n: (out / "antifold.csv").write_text("variant_id,score\nH:T30Y,0.2\n"),
     )
 
-    produced = _scorers.antifold.run([structure], out, candidates=candidates)
+    produced = scorer(_scorers.antifold).run([structure], out, candidates=candidates)
     lines = produced[0].path.read_text().splitlines()
 
     assert lines[0] == "variant_id,score,raw"
@@ -141,7 +157,7 @@ def test_the_tools_column_names_are_overridable_per_call(
         lambda n: (out / "antifold.csv").write_text("id,llr\nH:T30Y,0.2\n"),
     )
 
-    produced = _scorers.antifold.run(
+    produced = scorer(_scorers.antifold).run(
         [structure], out, candidates=candidates, id_column="id", value_column="llr"
     )
 
@@ -159,7 +175,7 @@ def test_an_unreadable_output_says_which_columns_were_expected(
     )
 
     with pytest.raises(ValueError, match="id_column"):
-        _scorers.antifold.run([structure], out, candidates=candidates)
+        scorer(_scorers.antifold).run([structure], out, candidates=candidates)
 
 
 def test_a_gate_container_fails_only_on_the_wrong_side_of_its_threshold(
@@ -176,7 +192,7 @@ def test_a_gate_container_fails_only_on_the_wrong_side_of_its_threshold(
         ),
     )
 
-    produced = _gates.thermompnn.run([structure], out, candidates=candidates)
+    produced = check(_gates.thermompnn).run([structure], out, candidates=candidates)
     rows = {
         line.split(",")[0]: line.split(",")[1]
         for line in produced[0].path.read_text().splitlines()[1:]
@@ -198,7 +214,7 @@ def test_a_solubility_check_fails_below_its_threshold(
         ),
     )
 
-    produced = _gates.netsolp.run([structure], out, candidates=candidates)
+    produced = check(_gates.netsolp).run([structure], out, candidates=candidates)
     text = produced[0].path.read_text()
 
     assert "H:T30Y,false" in text
@@ -218,7 +234,7 @@ def test_a_check_with_no_answer_does_not_drop_the_candidate(
         ),
     )
 
-    produced = _gates.netsolp.run([structure], out, candidates=candidates)
+    produced = check(_gates.netsolp).run([structure], out, candidates=candidates)
     text = produced[0].path.read_text()
 
     assert "H:S35A,true" in text
@@ -239,7 +255,7 @@ def test_the_threshold_is_overridable_per_call(
         ),
     )
 
-    strict = _gates.thermompnn.run(
+    strict = check(_gates.thermompnn).run(
         [structure], out, candidates=candidates, threshold=0.1
     )
 

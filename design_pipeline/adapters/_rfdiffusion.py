@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..containers import ContainerAdapter
+from ..routes import RFDIFFUSION_IMAGE
 
 ALIASES = {
     "input_pdb": "inference.input_pdb",
@@ -62,8 +63,11 @@ def parse_trb(trb: Path) -> dict[str, float]:
         return {}
 
 
+# The one published image of the ten this package used to name, pinned by
+# digest in routes.py rather than tracking a tag that can move under a
+# campaign without changing the config.
 rfdiffusion = ContainerAdapter(
-    image="rosettacommons/rfdiffusion",
+    image=RFDIFFUSION_IMAGE,
     arg_style="hydra",
     # Partial diffusion feeds each input design in as inference.input_pdb;
     # fresh generation passes the target the same way, through path_kwargs.

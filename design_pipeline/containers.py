@@ -1,8 +1,12 @@
-"""Container runtime detection and `docker run` / `apptainer run` assembly.
+"""How a model is invoked: in a container, or as a local process.
 
-One adapter class covers every containerised model. What differs between models
-is data — image, argument style, which template carries the input, how to read
-the scores back — not a subclass.
+One adapter class covers every containerised model and one covers every model
+installed into an environment. What differs between models is data — image or
+executable, argument style, which template carries the input, how to read the
+scores back — not a subclass.
+
+`ContainerAdapter.image` has no default, on purpose. The registry used to ship
+ten image names, eight of which did not exist; see `routes.py`.
 """
 
 from __future__ import annotations
@@ -154,27 +158,15 @@ class ContainerAdapter:
         return designs
 
     def _existing(self, output_dir: Path) -> set[Path]:
-        found: set[Path] = set()
-        for pattern in self.output_globs:
-            found |= set(output_dir.rglob(pattern))
-        return found
+        return existing(output_dir, self.output_globs)
 
     def _designs(
         self, produced: Sequence[Path], run_dir: Path, parent: Design | None
     ) -> list[Design]:
-        designs: list[Design] = []
-        for source in sorted(produced):
-            for path, scores in self.collect(source, run_dir):
-                designs.append(
-                    Design(
-                        id=make_id(path, run_dir),
-                        path=path,
-                        parent_id=None if parent is None else parent.id,
-                        producer=self.image.split("/")[-1],
-                        scores=scores,
-                    )
-                )
-        return designs
+        # The repository name, without the registry path or the digest that
+        # pins it, is what belongs in `producer`.
+        producer = self.image.split("@")[0].split(":")[0].split("/")[-1]
+        return designs_from(produced, run_dir, parent, producer, self.collect)
 
     def _command(
         self,
@@ -222,6 +214,141 @@ class ContainerAdapter:
             if rewritten.get(key) is not None:
                 rewritten[key] = in_container(Path(str(rewritten[key])))
         cmd += format_kwargs(rewritten, self.arg_style, self.aliases, self.dash_flags)
+        cmd += list(extra_args)
+        return cmd
+
+
+def existing(output_dir: Path, patterns: Sequence[str]) -> set[Path]:
+    found: set[Path] = set()
+    for pattern in patterns:
+        found |= set(output_dir.rglob(pattern))
+    return found
+
+
+def designs_from(
+    produced: Sequence[Path],
+    run_dir: Path,
+    parent: Design | None,
+    producer: str,
+    collect: Collect,
+) -> list[Design]:
+    designs: list[Design] = []
+    for source in sorted(produced):
+        for path, scores in collect(source, run_dir):
+            designs.append(
+                Design(
+                    id=make_id(path, run_dir),
+                    path=path,
+                    parent_id=None if parent is None else parent.id,
+                    producer=producer,
+                    scores=scores,
+                )
+            )
+    return designs
+
+
+@dataclass(frozen=True)
+class ProcessAdapter:
+    """Runs a model installed in an environment. Same contract, no container.
+
+    The counterpart to `ContainerAdapter` for the tools that pip or conda can
+    actually install - ESM-IF in Env A, AntiFold and ThermoMPNN in Env B. There
+    are no mounts, so host paths pass through untouched, which is the only real
+    difference in command assembly.
+
+    `tool` is the key into `routes.ROUTES`: `run` asks that table whether the
+    tool is here before assembling anything, so a missing install fails with
+    its install route rather than with a FileNotFoundError on the executable.
+
+    `executable` may be overridden per call, which is how Env B is reached: the
+    adapter runs a binary from another environment rather than whatever is
+    first on PATH.
+    """
+
+    tool: str
+    executable: str
+    output_globs: tuple[str, ...]
+    input_template: tuple[str, ...] = ()
+    output_template: tuple[str, ...] = ()
+    fixed_args: tuple[str, ...] = ()
+    command: tuple[str, ...] = ()
+    """Arguments before the model's own, e.g. ("-m", "antifold.main")."""
+    arg_style: ArgStyle = "flag"
+    aliases: Mapping[str, str] = field(default_factory=dict)
+    dash_flags: bool = False
+    per_input: bool = True
+    collect: Collect = default_collect
+    path_kwargs: tuple[str, ...] = ()
+    """Kwargs whose value is a host path. Kept for symmetry with the container
+    adapter, where they decide the mounts; here they are already correct."""
+    env_var: str | None = None
+    """An environment variable that overrides `executable`, for a tool that
+    lives in another environment."""
+
+    def run(
+        self,
+        inputs: Sequence[Design],
+        output_dir: Path,
+        *,
+        executable: str | Path | None = None,
+        extra_args: Sequence[str] | None = None,
+        **kwargs: Any,
+    ) -> list[Design]:
+        from .routes import configured_path, require
+
+        chosen = executable or (
+            configured_path(self.env_var) if self.env_var else None
+        )
+        if chosen is None:
+            # Only probe the table when the caller has not named the binary; an
+            # explicit executable= is the caller telling us where it is.
+            require(self.tool)
+            chosen = self.executable
+
+        batches: list[list[Design]] = (
+            [[d] for d in inputs] if self.per_input else [list(inputs)]
+        )
+        if not inputs:
+            batches = [[]]
+
+        designs: list[Design] = []
+        for batch in batches:
+            before = existing(output_dir, self.output_globs)
+            stream(
+                self._command(str(chosen), batch, output_dir, extra_args or (), kwargs)
+            )
+            produced = [
+                p for p in existing(output_dir, self.output_globs) if p not in before
+            ]
+            parent = batch[0] if len(batch) == 1 else None
+            designs += designs_from(
+                produced, output_dir, parent, self.tool, self.collect
+            )
+
+        if not designs:
+            raise RunFailedError(
+                f"{self.tool} exited 0 but wrote nothing matching "
+                f"{self.output_globs} under {output_dir}. The flags this "
+                f"adapter passes are a first guess at the tool's CLI: check "
+                f"them against its --help on the dry run, and override the "
+                f"adapter if they have moved."
+            )
+        return designs
+
+    def _command(
+        self,
+        executable: str,
+        inputs: Sequence[Design],
+        output_dir: Path,
+        extra_args: Sequence[str],
+        kwargs: Mapping[str, Any],
+    ) -> list[str]:
+        cmd: list[str] = [executable, *self.command]
+        for design in inputs:
+            cmd += [t.format(path=design.path) for t in self.input_template]
+        cmd += [t.format(path=output_dir) for t in self.output_template]
+        cmd += list(self.fixed_args)
+        cmd += format_kwargs(dict(kwargs), self.arg_style, self.aliases, self.dash_flags)
         cmd += list(extra_args)
         return cmd
 

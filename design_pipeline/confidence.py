@@ -36,7 +36,11 @@ import warnings
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+# Seed agreement and the decoy control are Category 2 diagnostics: they need
+# no ground truth, which is exactly why they are the two confidence signals
+# available on a real target.
 from . import metrics
+from .metrics import diagnostics
 from .designs import Design
 
 FILENAME = "confidence.json"
@@ -101,12 +105,12 @@ def summarize(
         "decoy_gap": None,
     }
     summary["decoy_gap"] = _number(
-        metrics.decoy_gap(summary["iptm"], summary["decoy_iptm"])
+        diagnostics.decoy_gap(summary["iptm"], summary["decoy_iptm"])
     )
 
     if seeds and len(designs) > 1:
         try:
-            fraction, clusters = metrics.seed_agreement(
+            fraction, clusters = diagnostics.seed_agreement(
                 [d.path for d in designs], chains, partners
             )
         except (ValueError, KeyError) as exc:

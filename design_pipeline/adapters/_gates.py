@@ -19,8 +19,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
-from ..containers import ContainerAdapter, make_id
+from ..containers import ContainerAdapter, ProcessAdapter, make_id
 from ..designs import Design
+from ..errors import MissingRuntimeError
+from ..routes import require
 from ..structures import chain_sequence
 from ._tabular import CANDIDATES, CHECKS, read_candidates, read_tool_table, write_checks
 
@@ -131,9 +133,11 @@ class ContainerCheck:
     """
 
     name: str
-    container: ContainerAdapter
     value_column: str
     threshold: float
+    tool: ContainerAdapter | ProcessAdapter | None = None
+    """None for a check this package cannot invoke: no published image and no
+    verified command line. Not a guess at one - `run` raises out of `routes`."""
     fail_above: bool = True
     per_variant: bool = False
     requires_structure: bool = True
@@ -155,7 +159,14 @@ class ContainerCheck:
             raise ValueError(f"{self.name} needs candidates=<path to {CANDIDATES}>")
         limit = self.threshold if threshold is None else float(threshold)
         column = value_column or self.value_column
-        produced = self.container.run(
+        if self.tool is None:
+            require(self.name)
+            raise MissingRuntimeError(
+                f"{self.name} is installed, but this package has no verified "
+                f"way to invoke it. Set REGISTRY[{self.name!r}]; "
+                f"`python -m design_pipeline.preflight` prints the table."
+            )
+        produced = self.tool.run(
             inputs,
             output_dir,
             candidates=str(candidates),
@@ -197,7 +208,13 @@ class ContainerCheck:
         ]
 
 
-def _check_container(image: str, *, gpu: bool = True) -> ContainerAdapter:
+def check_container(image: str, *, gpu: bool = True) -> ContainerAdapter:
+    """A gate-check image, for one you have built yourself.
+
+    Public for the same reason as `_scorers.matrix_container`: this package
+    ships no image names, so a check that needs a container takes it from you.
+    The flags are this package's convention, not any tool's.
+    """
     return ContainerAdapter(
         image=image,
         input_template=("--pdb", "{path}"),
@@ -209,13 +226,28 @@ def _check_container(image: str, *, gpu: bool = True) -> ContainerAdapter:
     )
 
 
+# ThermoMPNN installs from its repository into its own mamba environment - its
+# environment.yaml, which its README warns can resolve a CPU-only torch - so
+# the adapter runs that environment's interpreter rather than anything on PATH.
+thermompnn_process = ProcessAdapter(
+    tool="thermompnn",
+    executable="thermompnn",
+    env_var="DESIGN_PIPELINE_THERMOMPNN",
+    input_template=("--pdb", "{path}"),
+    output_template=("--out_dir", "{path}"),
+    aliases={"candidates": "mutations_csv"},
+    path_kwargs=("candidates",),
+    output_globs=("*.csv",),
+)
+
+
 liabilities = LiabilityCheck()
 
 # Predicted change in folding stability, destabilizing positive. 1.5 kcal/mol
 # is loose on purpose: a marginal prediction is not a confident failure.
 thermompnn = ContainerCheck(
     name="thermompnn",
-    container=_check_container("kuhlmanlab/thermompnn"),
+    tool=thermompnn_process,
     value_column="ddg",
     threshold=1.5,
     fail_above=True,
@@ -224,7 +256,7 @@ thermompnn = ContainerCheck(
 # Aggregation propensity, structure-based, so one model per candidate.
 aggrescan3d = ContainerCheck(
     name="aggrescan3d",
-    container=_check_container("lcbio/aggrescan3d", gpu=False),
+    tool=None,
     value_column="a3d_score",
     threshold=1.0,
     fail_above=True,
@@ -233,7 +265,7 @@ aggrescan3d = ContainerCheck(
 # Predicted solubility, higher is better, hence fail_above=False.
 netsolp = ContainerCheck(
     name="netsolp",
-    container=_check_container("dtu/netsolp"),
+    tool=None,
     value_column="solubility",
     threshold=0.3,
     fail_above=False,

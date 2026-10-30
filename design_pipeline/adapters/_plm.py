@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
 from ..containers import make_id
+from ..matrices import from_position_mapping, score_candidates
 from ..designs import Design
 from ..errors import MissingDependencyError
 from ..structures import AMINO_ACIDS, chain_sequence
@@ -103,30 +104,21 @@ class MaskedMarginalScorer:
             chain, position, _wt, _mut = mutations[0]
             needed.setdefault(chain, []).append(position)
 
-        matrices: dict[str, Mapping[int, Mapping[str, float]]] = {
-            chain: self.backend.log_probs(chains, chain, sorted(set(positions)))
+        # The backend answers {position: {residue: log probability}}; the
+        # matrix is what carries the chain sequence alongside it, so a position
+        # that does not hold the residue the candidate table claims raises
+        # instead of scoring. Both rules a matrix scorer obeys - no additivity
+        # for a multi-mutation candidate, no zero for a position the model did
+        # not answer - live in `score_candidates`, shared with AntiFold.
+        matrices = {
+            chain: from_position_mapping(
+                chain,
+                self.backend.log_probs(chains, chain, sorted(set(positions))),
+                chains[chain],
+            )
             for chain, positions in needed.items()
         }
-
-        rows: list[tuple[str, float | None, float | None]] = []
-        for variant_id, mutations in wanted.items():
-            # A double mutant has no masked-marginal score. Two marginals
-            # multiplied is the additivity shortcut by another name, and the
-            # honest alternative - scoring the whole mutant sequence - is the
-            # pass-per-variant this class exists to avoid. An empty cell says
-            # so; use a per-variant scorer for pairs.
-            if len(mutations) != 1:
-                rows.append((variant_id, None, None))
-                continue
-            chain, position, wt, mut = mutations[0]
-            at_position = matrices.get(chain, {}).get(position)
-            if not at_position or wt not in at_position or mut not in at_position:
-                rows.append((variant_id, None, None))
-                continue
-            score = float(at_position[mut]) - float(at_position[wt])
-            # A log-likelihood ratio against the wild type is already
-            # higher-is-better, so raw and normalized agree.
-            rows.append((variant_id, score, score))
+        rows = score_candidates(matrices, wanted)
 
         path = write_scores(output_dir / SCORES, rows)
         return [

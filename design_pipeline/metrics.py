@@ -1,19 +1,35 @@
 """Everything that computes a number. Pure functions, one vocabulary.
 
-No adapters, no subprocesses, no cache. The notebook and the validation harness
-both call in here rather than each growing their own statistics, which is the
-only way the two stay comparable: a Spearman in the harness report and a
-Spearman in a notebook plot have to be the same Spearman.
+No adapters, no subprocesses, no registry, no cache. The notebook and the
+validation harness both call in here rather than each growing their own
+statistics, which is the only way the two stay comparable: a Spearman in the
+harness report and a Spearman in a notebook plot have to be the same Spearman.
 
-Three groups:
+The functions fall into two categories and the split is the point.
 
-* **Structure comparison** - `dockq`, `interface_rmsd`, `epitope_recall`,
+**Category 1 - ground truth.** Everything in this module. Each one needs a
+known answer - a deposited structure, a measured affinity - so they are
+available in the validation harness and the validation notebook and nowhere
+else. They are the only things in this package that speak to whether a
+prediction is *correct*.
+
+* Structure comparison: `dockq`, `interface_rmsd`, `epitope_recall`,
   `interface_residues`. How close a predicted complex is to a known one.
-* **Structure confidence** - `seed_agreement`, `decoy_gap`. How much to trust a
-  predicted complex when there is no known one, which is the situation that
-  matters.
-* **Ranking** - `spearman`, `precision_at_k`, `top_k_recall`. How well a
-  scorer's column orders candidates against measured affinity.
+* Ranking: `spearman`, `precision_at_k`, `top_k_recall`,
+  `magnitude_agreement`. How well a column orders candidates against measured
+  affinity - and whether its magnitudes carry information or only its order
+  does, which decides whether candidates can be picked by threshold or only by
+  rank.
+
+**Category 2 - diagnostics**, in `design_pipeline.metrics.diagnostics`. They
+need no answer key, so they run on the competition target. They catch bugs,
+redundancy and known-bad regimes; they cannot say whether a prediction is
+right, and that module's docstring says so at length because it is the thing
+most likely to be forgotten.
+
+The two are never blended. There is no summary score here that mixes them,
+because a number combining "the seeds agreed with each other" and "the
+predictions were correct" would be read as the second.
 
 Plus one schema. Every step that produces numbers writes `metrics.json` into
 its cache directory as a flat map, and `load` reads it back; nothing parses
@@ -26,9 +42,11 @@ prediction against a deposited structure - goes through `align_positions`,
 because a predictor numbers its output 1..N while the PDB uses author numbering
 with gaps and insertion codes.
 
-`numpy` and `pandas` are core. DockQ is an extra (`design-pipeline[metrics]`)
-and is imported inside the one function that needs it, so `import
-design_pipeline` stays light.
+`numpy` and `pandas` are core. DockQ - and biopython, which it brings - is an
+extra (`design-pipeline[metrics]`), imported inside the one function that needs
+it so that `import design_pipeline` stays light. `diagnostics` is reached
+through this module's `__getattr__` for the same reason: it speaks pandas, and
+nothing here that reads a structure needs pandas loaded to do it.
 """
 
 from __future__ import annotations
@@ -66,16 +84,44 @@ IRMSD_CUTOFF = 10.0
 """Wider cutoff for interface RMSD, matching DockQ's own definition: the
 superposition needs the interface's whole neighbourhood, not only its contacts."""
 
-SEED_CLUSTER_THRESHOLD = 5.0
-"""Interface RMSD below which two seeds are called the same answer."""
-
 MIN_PAIRS = 3
 """Below this, a rank correlation is noise with a number attached, and a
 superposition is underdetermined."""
 
+MAGNITUDE_GAP = 0.2
+"""How far Spearman has to exceed Pearson before a column is called
+rank-only. A loose first guess, like every threshold in this package: it is
+here so a report can say "rank-only" rather than print two correlations and
+leave the reader to compare them."""
+
+SCORE_PREFIX = "score_"
+RAW_SUFFIX = "_raw"
+"""A scorer's column is `score_<model>`; `score_<model>_raw` is the same
+opinion before orientation, kept for the record and never correlated against
+anything, since its sign convention is the model's rather than ours."""
+
+
+def score_columns(frame: Any) -> list[str]:
+    """The score columns of a frame, in order, raw ones excluded.
+
+    One definition, used by the harness report and by every diagnostic that
+    sweeps the columns. It was written out at three call sites before this
+    existed, and the third one disagreed with the other two about `_raw`.
+    """
+    return [
+        column
+        for column in frame.columns
+        if column.startswith(SCORE_PREFIX) and not column.endswith(RAW_SUFFIX)
+    ]
+
+
+def scorer_name(column: str) -> str:
+    """`score_esm_if` -> `esm_if`. What a report column is headed with."""
+    return column[len(SCORE_PREFIX) :] if column.startswith(SCORE_PREFIX) else column
+
 
 # --------------------------------------------------------------------------
-# Residue correspondence
+# Category 1: ground truth - residue correspondence
 # --------------------------------------------------------------------------
 
 
@@ -145,11 +191,11 @@ def sequence_identity(a: str, b: str) -> float:
 
 
 # --------------------------------------------------------------------------
-# Structure comparison
+# Category 1: ground truth - structure comparison
 # --------------------------------------------------------------------------
 
 
-def _split_chains(
+def split_chains(
     structure: Path, chains: Sequence[str] | None, partners: Sequence[str] | None
 ) -> tuple[list[str], list[str]]:
     """(side, other side). Defaults to the antibody against everything else.
@@ -198,7 +244,7 @@ def interface_residues(
     import biotite.structure as struc
 
     structure = Path(structure)
-    side, other = _split_chains(structure, chains, partners)
+    side, other = split_chains(structure, chains, partners)
     atoms = load_structure(structure)
     atoms = atoms[struc.filter_amino_acids(atoms)]
     partner_atoms = atoms[np.isin(atoms.chain_id, other)]
@@ -282,7 +328,7 @@ def interface_rmsd(
     import biotite.structure as struc
 
     predicted, reference = Path(predicted), Path(reference)
-    side, other = _split_chains(reference, chains, partners)
+    side, other = split_chains(reference, chains, partners)
     residues = interface_residues(
         reference, side, other, cutoff
     ) | interface_residues(reference, other, side, cutoff)
@@ -309,7 +355,7 @@ def epitope_recall(
     """
     predicted, reference = Path(predicted), Path(reference)
     if antigen_chains is None:
-        side, other = _split_chains(reference, antibody_chains, None)
+        side, other = split_chains(reference, antibody_chains, None)
         antibody_chains, antigen_chains = side, other
     true = interface_residues(reference, antigen_chains, antibody_chains, cutoff)
     if not true:
@@ -421,73 +467,7 @@ def dockq(
 
 
 # --------------------------------------------------------------------------
-# Structure confidence
-# --------------------------------------------------------------------------
-
-
-def seed_agreement(
-    paths: Sequence[Path | str],
-    chains: Sequence[str] | None = None,
-    partners: Sequence[str] | None = None,
-    threshold: float = SEED_CLUSTER_THRESHOLD,
-) -> tuple[float, int]:
-    """(fraction of seeds in the largest cluster, number of clusters).
-
-    Single-linkage clustering of the ensemble by interface RMSD. Eighteen of
-    twenty seeds agreeing on one epitope is stronger evidence than any single
-    ipTM, because the documented bottleneck in antibody-antigen prediction is
-    identifying the correct model among those generated rather than generating
-    one at all - and disagreement is the one signal that does not come from the
-    model's own self-assessment.
-
-    One path is (1.0, 1) by definition and says nothing; ask for seeds.
-    """
-    paths = [Path(p) for p in paths]
-    if not paths:
-        raise ValueError("seed_agreement needs at least one prediction")
-    count = len(paths)
-    if count == 1:
-        return 1.0, 1
-
-    parent = list(range(count))
-
-    def find(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    for i in range(count):
-        for j in range(i + 1, count):
-            distance = interface_rmsd(paths[j], paths[i], chains, partners)
-            if distance == distance and distance <= threshold:
-                a, b = find(i), find(j)
-                if a != b:
-                    parent[a] = b
-
-    sizes: dict[int, int] = {}
-    for i in range(count):
-        root = find(i)
-        sizes[root] = sizes.get(root, 0) + 1
-    return max(sizes.values()) / float(count), len(sizes)
-
-
-def decoy_gap(real_iptm: float | None, decoy_iptm: float | None) -> float:
-    """real - decoy. The control that says whether confidence means anything.
-
-    These predictors assign confident scores to deliberately shuffled,
-    non-cognate antibody-antigen pairs, so an ipTM of 0.8 is only evidence if a
-    mismatched antigen scores materially lower on the same settings. A gap near
-    zero means confidence is uninformative *for this system* - not that the
-    prediction is wrong, which is a different and less actionable thing.
-    """
-    if real_iptm is None or decoy_iptm is None:
-        return float("nan")
-    return float(real_iptm) - float(decoy_iptm)
-
-
-# --------------------------------------------------------------------------
-# Ranking
+# Category 1: ground truth - ranking against what was measured
 # --------------------------------------------------------------------------
 
 
@@ -566,6 +546,71 @@ def top_k_recall(
     return len(shortlist & best) / float(n_true)
 
 
+def magnitude_agreement(
+    predicted: np.ndarray,
+    measured: np.ndarray,
+    *,
+    gap: float = MAGNITUDE_GAP,
+) -> dict[str, float]:
+    """Does score *magnitude* predict effect size, or only score order?
+
+    Spearman answers whether a scorer ranks candidates correctly. It cannot
+    answer the question that decides how the shortlist is cut: if a mutation
+    scoring twice as high does not bind twice as tightly, then only the
+    ordering carries information and candidates have to be picked by rank
+    rather than by a threshold on the score. A threshold on a column whose
+    magnitudes are meaningless is an arbitrary cut dressed up as a criterion.
+
+    So this returns both correlations plus the linear fit of measured on
+    predicted. `rank_only` is True when the rank correlation is respectable and
+    the linear one is materially worse by `gap` - the signature of a column
+    that orders well and scales badly. It is a flag for a human to look at, not
+    a verdict: `gap` is a first guess and the fit is a straight line through
+    data that has no reason to be straight.
+
+    Only answerable against measured affinities, so it is Category 1 and lives
+    with the rest of the ranking metrics: the harness is the only place in this
+    package that can call it.
+    """
+    predicted, measured = _usable(predicted, measured)
+    if len(predicted) < MIN_PAIRS or predicted.std() == 0 or measured.std() == 0:
+        return {
+            "n": float(len(predicted)),
+            "pearson": float("nan"),
+            "spearman": float("nan"),
+            "slope": float("nan"),
+            "intercept": float("nan"),
+            "r2": float("nan"),
+            "rank_only": False,
+        }
+    pearson = float(np.corrcoef(predicted, measured)[0, 1])
+    rho = spearman(predicted, measured)
+    slope, intercept = np.polyfit(predicted, measured, 1)
+    return {
+        "n": float(len(predicted)),
+        "pearson": pearson,
+        "spearman": rho,
+        "slope": float(slope),
+        "intercept": float(intercept),
+        "r2": pearson**2,
+        "rank_only": bool(
+            rho == rho and abs(rho) >= 0.3 and abs(rho) - abs(pearson) > gap
+        ),
+    }
+
+
+def nanmean(values: Sequence[float]) -> float:
+    """Mean of the values that are not NaN, NaN when none are.
+
+    Here rather than in the harness because the harness is not allowed its own
+    statistics, and because the choice it encodes - average each scorer's
+    per-system correlations rather than pool the rows - is a decision about
+    what the number means, not a formatting detail.
+    """
+    usable = [float(v) for v in values if v == v]
+    return sum(usable) / len(usable) if usable else float("nan")
+
+
 def _usable(predicted: np.ndarray, measured: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     predicted = np.asarray(predicted, dtype=float)
     measured = np.asarray(measured, dtype=float)
@@ -628,3 +673,28 @@ def load_all(root: Path | str) -> dict[Path, dict[str, Scalar]]:
         except json.JSONDecodeError:
             continue  # a half-written file is not a result
     return found
+
+
+# --------------------------------------------------------------------------
+# Category 2 lives next door
+# --------------------------------------------------------------------------
+
+
+def __getattr__(name: str):
+    """`metrics.diagnostics` - Category 2, loaded on first use.
+
+    A deliberate seam rather than a plain import at the top of the file. Two
+    reasons, in order: the categories stay separate, so nothing in Category 1
+    can quietly come to depend on a diagnostic and no caller can reach one
+    without naming `diagnostics` out loud; and the diagnostics speak pandas,
+    which the structure comparisons above do not need and which `import
+    design_pipeline` should not pay for.
+
+    `from design_pipeline.metrics import diagnostics` works, because that is
+    what PEP 562 is for.
+    """
+    if name == "diagnostics":
+        from . import _diagnostics
+
+        return _diagnostics
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
