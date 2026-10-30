@@ -1,0 +1,89 @@
+{
+ "run_id": "test_01",
+ "label": "plumbing-test",
+ "created": "2026-10-30 09:06 UTC",
+ "code_commit": "34bf9ba",
+ "gpu_job_id": "411146",
+ "n_designs": 5,
+ "n_pass": 5,
+ "pass_rate": 1.0,
+ "n_with_warnings": 0,
+ "producers": [
+  "boltz"
+ ],
+ "seeds": [
+  0
+ ],
+ "groups": {
+  "test_a": 2,
+  "test_b": 2,
+  "parent": 1
+ },
+ "primary": {
+  "key": "iptm",
+  "label": "ipTM",
+  "better": "higher"
+ },
+ "parent_id": "wt_model_0-cfed8893",
+ "metrics": {
+  "iptm": {
+   "label": "ipTM",
+   "better": "higher",
+   "target": 0.8,
+   "gate": 0.5,
+   "digits": 2,
+   "n": 5,
+   "median": 0.9364194869995117,
+   "mean": 0.9354482769966126,
+   "min": 0.926537811756134,
+   "max": 0.9471378326416016,
+   "best": 0.9471378326416016,
+   "ok": 5,
+   "warn": 0,
+   "fail": 0,
+   "parent": 0.9370681643486023
+  },
+  "plddt": {
+   "label": "pLDDT",
+   "better": "higher",
+   "target": 85,
+   "gate": 80,
+   "digits": 1,
+   "n": 5,
+   "median": 91.77935719490051,
+   "mean": 91.71402931213379,
+   "min": 91.4313554763794,
+   "max": 91.87794327735901,
+   "best": 91.87794327735901,
+   "ok": 5,
+   "warn": 0,
+   "fail": 0,
+   "parent": 91.87794327735901
+  },
+  "ptm": {
+   "label": "pTM",
+   "better": "higher",
+   "target": 0.8,
+   "gate": null,
+   "digits": 2,
+   "n": 5,
+   "median": 0.9477448463439941,
+   "mean": 0.9470057129859925,
+   "min": 0.9397578835487366,
+   "max": 0.9544247388839722,
+   "best": 0.9544247388839722,
+   "ok": 5,
+   "warn": 0,
+   "fail": 0,
+   "parent": 0.9477448463439941
+  }
+ },
+ "verdict": "5/5 designs pass all gates \u00b7 best ipTM 0.95 \u00b7 parent 0.94",
+ "files": [
+  "report.md",
+  "designs.csv",
+  "summary.json",
+  "scatter.png",
+  "compare.png"
+ ]
+}
