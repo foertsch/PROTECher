@@ -91,3 +91,43 @@ def write_manifest(run_dir: Path, designs: Sequence[Design]) -> None:
         for d in designs
     ]
     (run_dir / DONE).write_text(json.dumps(records, indent=1, default=str))
+
+
+def tool_key(
+    *,
+    structure_hash: str,
+    candidate_hash: str,
+    model_name: str,
+    resolved: Mapping[str, Any],
+) -> str:
+    """The key for one scorer or one gate check over one candidate set.
+
+    Per scorer, not per pipeline step. Adding GearBind to a `models=[...]` list
+    must not invalidate the AntiFold run that already finished - the harness
+    re-scores dozens of held-out systems while the scorer set keeps changing,
+    and a key that spanned the whole fan-out would throw all of it away every
+    time somebody added a column.
+
+    The candidate hash covers the ids actually handed to this adapter, so a
+    `max_variants` cap is part of what identifies the run rather than a
+    footgun that returns a short result under the full set's key.
+    """
+    payload = {
+        "structure": structure_hash,
+        "candidates": candidate_hash,
+        "model_name": model_name,
+        "resolved": json.loads(json.dumps(resolved, default=str, sort_keys=True)),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def hash_file(path: Path) -> str:
+    """Content hash of one file. The structure half of `tool_key`."""
+    return _hash_file(Path(path))
+
+
+def hash_ids(ids: Iterable[str]) -> str:
+    """Content hash of a candidate set. Order-independent, duplicates collapsed:
+    the same set asked for twice is one run."""
+    joined = "\n".join(sorted(set(ids)))
+    return hashlib.sha256(joined.encode()).hexdigest()[:16]

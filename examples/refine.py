@@ -7,20 +7,23 @@ give: rerun this script and every completed round is skipped.
 To run it offline with no GPU, pass the dummy models:
 
     python examples/refine.py --dummy
+
+This is the optional de novo branch, not the default path. The public API is
+affinity maturation (see examples/maturation.py); these steps live in
+`design_pipeline.denovo` and are reached from `diffuse_loops`.
 """
 
 from __future__ import annotations
 
 import sys
 
-from design_pipeline import (
+from design_pipeline.denovo import (
     design_sequences,
     make_protein_backbones,
     predict_structure,
-    score_designs,
-    select,
-    to_dataframe,
 )
+from design_pipeline.designs import select, to_dataframe
+from design_pipeline.scoring import score_designs
 
 contigs = "[10-40/A163-181/10-40]"
 n_rounds = 3

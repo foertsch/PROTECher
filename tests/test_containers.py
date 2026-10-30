@@ -12,7 +12,7 @@ from design_pipeline import (  # type: ignore[attr-defined]
     MissingRuntimeError,
     adapters,
 )
-from design_pipeline import containers
+from design_pipeline import containers, routes
 from design_pipeline.adapters import _colabfold
 from design_pipeline.containers import detect_runtime, format_kwargs
 
@@ -87,7 +87,7 @@ def test_rfdiffusion_fresh_generation(tmp_path, monkeypatch, docker_only) -> Non
     cmd = calls[0]
     assert cmd[:2] == ["docker", "run"]
     assert "--rm" in cmd and cmd[cmd.index("--gpus") + 1] == "all"
-    assert "rosettacommons/rfdiffusion" in cmd
+    assert routes.RFDIFFUSION_IMAGE in cmd
     assert f"{(tmp_path / 'inputs').as_posix()}:/mnt/in0" in cmd
     assert f"{out.resolve().as_posix()}:/mnt/out" in cmd
     # The target is mounted and rewritten to its container path.
@@ -132,7 +132,7 @@ def test_apptainer_flags(tmp_path, monkeypatch, both_runtimes) -> None:
     assert cmd[:2] == ["apptainer", "run"]
     assert "--nv" in cmd
     assert "--bind" in cmd
-    assert "docker://rosettacommons/rfdiffusion" in cmd
+    assert f"docker://{routes.RFDIFFUSION_IMAGE}" in cmd
 
 
 def test_hydra_and_flag_styles() -> None:

@@ -111,15 +111,15 @@ def select(
 def to_dataframe(designs: Iterable[Design]) -> "pd.DataFrame":
     """One row per design, `scores` flattened into columns.
 
-    pandas is an extra (`design-pipeline[analysis]`): analysis wants it, the pipeline
-    does not, so it is imported here rather than at module import.
+    pandas is a core dependency (the variant table needs it), but this helper
+    belongs to the de novo branch, so it is imported where it is used.
     """
     try:
         import pandas as pd
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised by hand
         raise ModuleNotFoundError(
-            "to_dataframe needs pandas. Install it with "
-            "`uv pip install 'design-pipeline[analysis]'`."
+            "to_dataframe needs pandas, which is a core dependency: "
+            "reinstall with `uv pip install -e .`."
         ) from exc
 
     rows = []

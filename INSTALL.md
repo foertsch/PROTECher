@@ -1,12 +1,24 @@
 # Installing and running `design_pipeline`
 
-Three model steps plus scoring, each swappable by name. The core package is
-small and pure Python; the models run in containers or as an optional extra, so
-you install only what you intend to run.
+Affinity maturation in five functions, each model swappable by name. The core
+package is small and pure Python; the models install into one of two
+environments, or into the single container that genuinely needs one, so you
+install only what you intend to run.
 
 Order matters: do step 1 and 2 on your laptop first. They need no GPU, no
 Docker and no network, and they tell you the package works before you start
 fighting with CUDA.
+
+At any point, in any environment:
+
+```bash
+python -m design_pipeline.preflight
+```
+
+prints one row per adapter — step, which environment it belongs to, whether it
+resolves here, and what was probed — and exits non-zero when a model the
+default campaign needs is missing. Run it in each environment before the event.
+It imports nothing for real and pulls nothing, so it is safe on a login node.
 
 ---
 
@@ -16,7 +28,7 @@ Python 3.11 or newer. We use [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv venv --python 3.11
-uv pip install -e '.[dev,analysis]'
+uv pip install -e '.[dev]'
 ```
 
 Activate it with `source .venv/bin/activate` (Linux/macOS) or
@@ -27,21 +39,113 @@ Without uv:
 
 ```bash
 python3.11 -m venv .venv
-.venv/bin/pip install -e '.[dev,analysis]'
+.venv/bin/pip install -e '.[dev]'
 ```
 
 What you just installed:
 
 | | |
 |---|---|
-| core | `numpy`, `biotite` — needed by scoring, both light |
-| `[dev]` | `pytest`, `pandas` |
-| `[analysis]` | `pandas`, for `to_dataframe` |
+| core | `numpy`, `biotite` for structures; `pandas` + `pyarrow` for the variant table. All light. |
+| `[dev]` | `pytest` |
+| `[numbering]` | `anarci`, for the `imgt` column |
 
 No torch, no jax, nothing CUDA. Importing `design_pipeline` imports no model.
-RFdiffusion runs in a container and adds **no** Python dependency. The two
-model extras, `[mpnn]` and `[colabfold]`, are heavy and are covered in section
-4 — install them only if you intend to run those models locally.
+The container adapters — every scorer, every gate check, RFdiffusion — add
+**no** Python dependency at all. The model extras `[mpnn]` and `[colabfold]`
+are heavy and are covered in section 4; install them only if you intend to run
+those models locally.
+
+`[numbering]` is optional and needs HMMER on `PATH`. Without it the `imgt`
+column is empty and a warning says so once; nothing else changes, because every
+join in this package is on chain positions. IMGT labels matter when you want a
+result to carry across antibodies.
+
+### Two environments and one container
+
+Models do not all fit together, so they do not all go in one place. There are
+three places, and `design_pipeline/routes.py` is the machine-readable version
+of this table — the errors and `preflight` both read it.
+
+| | holds | why |
+|---|---|---|
+| **Env A** | this package, `ablang2`, `antiberty`, `transformers` + `torch`, `fair-esm`, `anarci` | the sequence-only scorers and the whole table/gating path. Build and test this first. |
+| **Env B** | `antifold`, `thermompnn`, and the co-folding models (`chai`, `boltz`, `protenix`, `colabfold`) | each pins torch against the others, and AntiFold pins `biotite==0.38` |
+| **container** | `gearbind` | TorchDrug pins Python ≤3.10 and an old torch: the one conflict a second environment cannot fix |
+| **container** | `rfdiffusion` | it already had a published image; pinned by digest |
+
+"Env B" is one label for several possible environments. Each of its models is
+reached by its own path, so whether AntiFold and ThermoMPNN actually share one
+mamba environment is a question for the dry run — their pins may force two.
+Nothing in the code assumes either way; that is what `executable=` is for.
+
+Adapters in another environment are reached by path, not by import — the
+pipeline shells out:
+
+```python
+score_variants(complex_, variants, models=["antifold"],
+               executable="/opt/envs/antifold/bin/python")
+# or, once, for the whole session:
+export DESIGN_PIPELINE_ANTIFOLD=/opt/envs/antifold/bin/python
+export DESIGN_PIPELINE_THERMOMPNN=/opt/envs/thermompnn/bin/thermompnn
+```
+
+#### AntiFold cannot go in Env A
+
+`pip install antifold` pins `torch==2.3.1`, `torch-geometric==2.4.0`,
+`biotite==0.38`, `biopython==1.83` and `numpy==1.26.*`. This package needs
+`biotite>=2.0`, because biotite 2.0 changed `superimpose()` and the scoring
+relies on the new signature. Checked on 2026-10-30:
+
+```
+$ pip install --dry-run "biotite>=2.0" "numpy>=1.26" antifold
+ERROR: Cannot install antifold==0.2.0, antifold==0.2.1, antifold==0.2.2,
+antifold==0.2.3, antifold==0.3.0, antifold==0.3.1 and biotite>=2.0 because
+these package versions have conflicting dependencies.
+ERROR: ResolutionImpossible
+```
+
+That is every published version of AntiFold. So it gets its own environment and
+is invoked by path. It is still in `DEFAULT_SCORERS`, which means a default
+`score_variants` call needs Env B configured — decide whether that is what you
+want before the event.
+
+#### ESM-IF, resolved empirically
+
+Two separate questions, two different answers. The pure-Python part resolves
+into Env A with no conflict:
+
+```
+$ pip install --dry-run "biotite>=2.0" fair-esm torch-geometric
+Would install biotite-2.0.0 fair-esm-2.0.0 torch-geometric-2.8.1 numpy-2.5.4
+  scipy-1.18.1 networkx-3.7 ... (no conflict)
+```
+
+`torch-scatter` does not:
+
+```
+$ pip install --dry-run "biotite>=2.0" fair-esm torch-geometric torch-scatter
+  File "<string>", line 8, in <module>
+ModuleNotFoundError: No module named 'torch'
+error: subprocess-exited-with-error
+Getting requirements to build wheel did not run successfully.
+```
+
+It ships no wheel for current torch, so pip builds it from the sdist, and its
+`setup.py` imports `torch` at build time inside an isolated build environment
+where torch is not present. It cannot be installed in the same `pip install` as
+torch. The sequence that works is two steps, and needs a C++ compiler (plus the
+CUDA toolkit for GPU support):
+
+```bash
+pip install torch                     # first, on its own
+pip install torch-scatter --no-build-isolation
+```
+
+Note also what this does *not* establish: `fair-esm` installing is not ESM-IF
+running. ESM-IF is a Python API with no command line, so this package has no
+verified way to invoke it, and the `esm_if` adapter says exactly that rather
+than shelling out to a command nobody has checked.
 
 ---
 
@@ -54,23 +158,32 @@ so the whole loop is testable on a laptop. Run the test suite:
 .venv/bin/python -m pytest -q
 ```
 
-68 tests, about 20 seconds, fully offline. Then run the real round loop against
+197 tests, about 30 seconds, fully offline. Then run the real pipeline against
 fixtures:
 
 ```bash
-.venv/bin/python examples/refine.py --dummy
+.venv/bin/python examples/maturation.py --dummy
 ```
 
-That generates backbones, designs sequences, "folds" them, scores, selects the
-best 8 and re-diffuses — three rounds — and prints the top 10 as a dataframe.
-Run it twice: the second run resumes from cache and does no work.
+That takes a fixture complex, enumerates every single mutation of its heavy
+chain, scores them, gates the sequence liabilities, builds 20 pairs at least
+10 A apart and scores those. Run it twice: the second run resumes from cache
+and does no work. The validation harness runs offline too, on the two fixture
+systems that ship with the package:
+
+```bash
+.venv/bin/python -c "from design_pipeline.harness import run_systems, report; print(report(run_systems(models=['dummy_scorer'])))"
+```
 
 If both of those pass, the package is fine and anything that breaks later is
 the environment, not the code.
 
 ---
 
-## 3. Container runtime (for RFdiffusion and ProteinMPNN)
+## 3. Container runtime (for RFdiffusion and GearBind only)
+
+Two adapters use a container. Everything else installs into Env A, B or C,
+so you can skip this section entirely for a scoring-and-gating campaign.
 
 You need **either** apptainer or docker. The adapter detects which is present
 and prefers apptainer, because that is the one shared clusters allow.
@@ -102,25 +215,26 @@ both options rather than failing somewhere deep in a subprocess.
 
 ---
 
-## 4. Model images and weights
+## 4. Model routes and weights
 
-### RFdiffusion — weights ship inside the image
+### RFdiffusion — the one published image, pinned by digest
 
-The adapter uses image `rosettacommons/rfdiffusion` and passes
-`inference.model_directory_path=/app/RFdiffusion/models`, which is where the
-weights live inside that image. Nothing to download separately.
+Checked on Docker Hub on 2026-10-30: `rosettacommons/rfdiffusion` exists and
+has exactly one tag, `latest`, 8.1 GB, pushed 2025-06-25. The adapter pins the
+digest that tag pointed at rather than the tag itself, because a tag that moves
+under a campaign changes the scores without changing the config, and the cache
+key would not notice. The pin lives in `design_pipeline/routes.py` as
+`RFDIFFUSION_IMAGE`.
+
+The adapter passes `inference.model_directory_path=/app/RFdiffusion/models`,
+which is where the weights live inside that image. Nothing to download
+separately.
 
 ```bash
-docker pull rosettacommons/rfdiffusion
+docker pull rosettacommons/rfdiffusion@sha256:b88dc5d7ccd166557fb9b922bbaeb15bdf8d0568907c50405a8bf282e67254fe
 # apptainer pulls on first use and caches it; to pre-pull:
-apptainer pull docker://rosettacommons/rfdiffusion
+apptainer pull docker://rosettacommons/rfdiffusion@sha256:b88dc5d7ccd166557fb9b922bbaeb15bdf8d0568907c50405a8bf282e67254fe
 ```
-
-> **Verify this image name before the event.** It comes from our brief, not
-> from a pull we have done. RFdiffusion's repository ships a `Dockerfile` you
-> are expected to build yourself, and the weights are downloaded by a script
-> rather than baked in. If the pull above 404s, build it locally and point the
-> adapter at your image — see *Overriding an adapter* below.
 
 Set a big cache dir if `$HOME` is small, which it usually is on a cluster:
 
@@ -214,15 +328,17 @@ Two things to know about the arguments:
   torch), because its command line throws away the PAE matrix that
   `pae_interaction` needs. It therefore has no `extra_args`; pass
   `run_inference` arguments as keywords, e.g.
-  `predict_structure(seqs, num_trunk_recycles=5)`.
+  `get_structure(out, model_name="chai1", antibody_seq=..., antigen_seq=...,
+  num_trunk_recycles=5)`.
 - Protenix picks the checkpoint: `checkpoint="protenix_mini_default_v0.5.0"`
   is much faster at comparable quality, and the `protenix_mini_esm_v0.5.0` /
   `protenix_mini_ism_v0.5.0` variants need no MSA. Add
   `use_default_params=True` to get the cycle and step counts a Mini checkpoint
   was tuned for.
 
-To run the loop with no GPU and no network, use the fixture counterparts
-`dummy_chai`, `dummy_boltz` and `dummy_protenix`.
+To run step 1 with no GPU and no network, use `dummy_complex`; the de novo
+branch has the fixture folders `dummy_chai`, `dummy_boltz` and
+`dummy_protenix`.
 
 ### ColabFold — optional Python extra, weights download on first run
 
@@ -246,11 +362,81 @@ colabfold_batch --help
   a local server later, pass `host_url`:
 
   ```python
-  predict_structure(seqs, host_url="http://localhost:8080")
+  get_structure(out, model_name="colabfold", antibody_seq=..., antigen_seq=...,
+                host_url="http://localhost:8080")
   ```
 
 If `colabfold_batch` is not on `PATH`, the pipeline raises
 `MissingDependencyError` naming the extra to install.
+
+### Scorers and gate checks — routes, not images
+
+**This package ships no container image names except RFdiffusion's.** An
+earlier version of this file claimed the registry held "the published ones
+where a published one exists". That was wrong: ten adapters named ten images,
+and when they were checked against the Docker Hub API on 2026-10-30, eight of
+the ten returned 404. The names were GitHub `org/repo` slugs used as registry
+paths. A default that 404s is worse than no default, because it fails inside
+`docker pull` with a registry error instead of telling you what to install.
+
+What each one actually needs, and whether we have checked it:
+
+| adapter | where | route | checked |
+|---|---|---|---|
+| `antifold` | Env B | `pip install antifold` (PyPI 0.3.1, BSD-3; weights download on first run) | yes |
+| `esm_if` | Env A | `pip install fair-esm` + `torch-geometric` + `torch-scatter` — but no CLI exists to invoke | route yes, invocation no |
+| `ablang2` | Env A | `pip install ablang2` | yes |
+| `esm1v`, `esm2_650m` | Env A | `pip install 'design-pipeline[plm]'` | yes |
+| `antiberty` | Env A | `pip install antiberty` | no |
+| `consensus`, `liabilities` | — | bundled; `consensus` needs an OAS table | yes |
+| `thermompnn` | Env B | `git clone https://github.com/Kuhlman-Lab/ThermoMPNN`, build its `environment.yaml` with mamba | yes |
+| `gearbind` | container | build from `https://github.com/DeepGraphLearning/GearBind`; no published image | yes |
+| `rosetta_ddg` | manual | licence-gated. An official `rosettacommons/rosetta` image does exist (23 tags) but is not configured here | yes |
+| `foldx` | manual | licence-gated; your own image | yes |
+| `alphafold3` | manual | weights from DeepMind on request; your own image | yes |
+| `aggrescan3d`, `netsolp`, `abmpnn`, `proteinmpnn_score` | — | **no route established.** These carried invented image names and nothing replaces them | no |
+
+AbMPNN has no public repository and its weights are request-gated, so there is
+nothing to install at all today.
+
+An adapter whose tool is not present raises `MissingRuntimeError` quoting its
+route verbatim. An adapter with no route says that instead of guessing one —
+and `preflight` marks an unchecked route as such, so the table never implies
+more than was actually verified.
+
+To wire one up once you have built it, each adapter is plain data, so the image
+name, the flag the candidates CSV arrives on, and the column the result is read
+from are all overridable without touching this package:
+
+```python
+from dataclasses import replace
+from design_pipeline import REGISTRY
+from design_pipeline.adapters import _scorers
+
+REGISTRY["gearbind"] = replace(
+    _scorers.gearbind,
+    tool=_scorers.matrix_container("ghcr.io/ourlab/gearbind:1.0"),
+    value_column="ddg_pred",
+)
+```
+
+Or per call, when it is only the column names that moved:
+
+```python
+score_variants(complex_, variants, models=["antifold"],
+               id_column="mutation", value_column="llr")
+```
+
+The registry holds no image names of its own, so there is nothing here to
+verify before a pull: the only image this package names is RFdiffusion's,
+pinned by digest. Every other container is one you build and set yourself, by
+the override above.
+
+The adapter contract is small enough to wrap anything: the container is handed
+a structure, a `candidates.csv` of `variant_id,chain,position,wt,mut`, and an
+output directory, and has to write a CSV with one row per `variant_id`. A
+candidate with several rows is a multi-mutation candidate and must be scored as
+one mutant — never as the sum of its parts.
 
 ### Overriding an adapter
 
@@ -296,34 +482,88 @@ weights in a directory you are happy to expose.
 
 ## 5. Running the pipeline
 
-### The three steps
+### The five steps
 
 ```python
 from design_pipeline import (
-    make_protein_backbones, design_sequences, predict_structure,
-    score_designs, select, to_dataframe,
+    get_structure, enumerate_variants, score_variants, gate, select_pairs,
 )
 
-backbones = make_protein_backbones(
-    "inputs/target.pdb",
-    output_dir="runs/v1/bb",
-    num_designs=100,
-    contigs="[10-40/A163-181/10-40]",
-    hotspot_res=["A59", "A83", "A91"],
-    seed=0,
+complex_ = get_structure("runs/her2_v1", pdb_id="1N8Z", chains=["A", "B", "C"])
+variants = enumerate_variants(complex_, chain="B")
+scores = score_variants(
+    complex_, variants, "runs/her2_v1/scores",
+    models=["antifold", "esm_if", "consensus"],
 )
-
-seqs  = design_sequences(backbones, "runs/v1/seqs", num_seqs=8)
-preds = predict_structure(seqs, "runs/v1/fold")
-scored = score_designs(preds, reference=backbones)
-
-best = select(scored, top_k=10, by="pae_interaction")
-print(to_dataframe(scored).sort_values("pae_interaction").head(20))
+survivors = gate(scores, checks=["liabilities"])
+pairs = select_pairs(survivors, max_pairs=20, min_distance=10.0,
+                     by="score_antifold")
+pair_scores = score_variants(complex_, pairs, models=["antifold", "gearbind"])
 ```
 
-Every function returns a plain `list[Design]`. Each `Design` holds an `id`, a
-`path` on disk, the `parent_id` it came from, its `producer`, a `scores` dict
-and free-form `meta`. Nothing is held in memory between steps.
+`get_structure` returns a `Complex`: the structure files it wrote plus the
+resolved config. The other four return a `VariantTable`: a parquet file of
+`variant_id, chain, position, imgt, wt, mut` plus one `score_<model>` column
+per scorer. Both are frozen, both hold paths, and nothing is held in memory
+between steps — read a table with `.frame` when you want the pandas object.
+
+A pair is two rows sharing one `variant_id`, in the same schema, which is why
+`score_variants` is simply called again on it. There is no code path anywhere
+that adds two single scores together to estimate a pair, and `select_pairs`
+drops the score columns rather than carry the singles' numbers forward.
+
+When the target has no solved structure, step 1 predicts one instead:
+
+```python
+complex_ = get_structure(
+    "runs/unknown_v1", model_name="alphafold3",
+    antibody_seq="EVQLVESGGG...", antigen_seq="TQVCTGTDMK...",
+    num_seeds=20,
+)
+print(len(complex_.paths), complex_.path)   # every seed, not only the top one
+```
+
+### Costs, caps and the cache
+
+`score_variants` caches per scorer, on (structure content, candidate set, model
+name, kwargs), so adding a model to `models=[...]` does not invalidate the ones
+that already ran. The matrix scorers see the whole table — one forward pass over
+the complex answers every single mutation. The per-variant scorers build and
+relax a structure per candidate, so they are capped:
+
+```python
+# gearbind on 4,598 candidates is a week of compute, so this raises
+score_variants(complex_, variants, models=["gearbind"])
+
+# rank on the column you decided to trust, then cap
+best = survivors.frame.sort_values("score_antifold", ascending=False)
+score_variants(complex_, survivors, models=["gearbind"], max_variants=200)
+```
+
+### The validation harness
+
+```python
+from design_pipeline.harness import run_systems, report
+
+results = run_systems(
+    systems=["1n8z_her2", "4fqi_flu"],
+    models=["antifold", "esm_if", "gearbind", "consensus"],
+    output_dir="runs/harness",
+)
+print(report(results))        # Spearman and precision@10, per scorer per system
+```
+
+Structures download; the measured affinities you supply once, as a CSV of
+`variant_id,measured_affinity` under `data/ground_truth/` (or wherever
+`$DESIGN_PIPELINE_GROUND_TRUTH` points). Sources are FLAb, AbBiBench and
+AB-Bind — `design_pipeline.harness.systems` names them per system, and so does
+the error you get for a missing file.
+
+Variant ids are 1-based into the chain as given in the structure file, so a set
+numbered in IMGT or Kabat needs converting first. `enumerate_variants(only=...)`
+checks every wild-type residue against the structure and refuses the rows that
+disagree, which is the one guard against a correlation computed at the wrong
+positions.
 
 ### Any model flag, without touching this package
 
@@ -333,54 +573,66 @@ covers the ergonomic names above; anything else passes straight through. For
 something the mapping does not reach, use `extra_args`:
 
 ```python
-make_protein_backbones(
-    "inputs/target.pdb",
-    num_designs=100,
-    extra_args=["denoiser.noise_scale_ca=0.5"],
-)
+score_variants(complex_, variants, models=["antifold"],
+               extra_args=["--batch_size", "16"])
 ```
+
+`**kwargs` and `extra_args` go to every model named in one call, so a flag one
+model rejects is an error for the whole call; the remedy is one call per model,
+which joins into the same table anyway.
 
 ### Swapping a model
 
 ```python
-seqs = design_sequences(backbones, "runs/v1/seqs", model_name="dummy_sequences")
+score_variants(complex_, variants, models=["dummy_scorer"])
+gate(scores, checks=["dummy_check"])
 ```
 
-Registered: `rfdiffusion`, `protein_mpnn`, `ligand_mpnn`, `soluble_mpnn`,
-`chai`, `boltz`, `protenix`, `colabfold`, `dummy_backbones`,
-`dummy_sequences`, `dummy_structures`, `dummy_chai`, `dummy_boltz`,
-`dummy_protenix`. An unknown name lists the known ones.
-
-Running several sequence-design variants in one round needs no API support —
-the steps return plain lists, so the arms concatenate and scoring sees them
-together. Folding with several models does take an argument:
-`predict_structure(seqs, model_name=["chai", "boltz"])` folds every sequence
-with each, which leaves one pool with two producers, so filter to one before
-`select`. See [examples/fanout.py](examples/fanout.py).
-
-### Iterative refinement
-
-The round loop is a `for` statement in your own script, not a library feature.
-See [examples/refine.py](examples/refine.py):
+The registry is a plain dict, so adding your own model is one assignment and no
+entry points:
 
 ```python
-for rnd in range(n_rounds):
-    seqs      = design_sequences(backbones, num_seqs=8)
-    preds     = predict_structure(seqs)
-    scored    = score_designs(preds, reference=backbones)
-    survivors = select(scored, top_k=8, by="pae_interaction")
-    backbones = make_protein_backbones(survivors, partial_T=20, num_designs=12, seed=rnd)
+from design_pipeline import REGISTRY
+REGISTRY["my_scorer"] = MyScorer()     # run(inputs, output_dir, **kwargs)
 ```
 
-`make_protein_backbones` takes either a target path (fresh generation) or a
-`list[Design]` (partial diffusion around them). `partial_T` is a raw timestep
-count relative to `diffuser.T`: published values like 80 assume the original
-200-step model, so at today's default `T=50` the equivalent is roughly 20.
+Registered names, by stage:
 
-Run it:
+| Stage | Names |
+|---|---|
+| structure | `pdb_download`, `alphafold3`, `boltz2`, `chai1`, `chai`, `boltz`, `protenix`, `colabfold` |
+| scorers | `antifold`, `esm_if`, `abmpnn`, `proteinmpnn_score`, `consensus`, `gearbind`, `rosetta_ddg`, `foldx` |
+| gate | `liabilities`, `thermompnn`, `aggrescan3d`, `netsolp` |
+| de novo | `rfdiffusion`, `protein_mpnn`, `ligand_mpnn`, `soluble_mpnn` |
+| fixtures | `dummy_complex`, `dummy_scorer`, `dummy_per_variant`, `dummy_check`, and the de novo `dummy_*` set |
+
+An unknown name lists the known ones.
+
+### The de novo branch
+
+RFdiffusion and the MPNN variants are kept, demoted off the default path. The
+one entry point is `diffuse_loops`, which rebuilds a CDR at its original length
+and returns an ordinary variant table:
+
+```python
+from design_pipeline import diffuse_loops
+
+loops = diffuse_loops(complex_, cdr="H3", num_designs=100)
+scores = score_variants(complex_, loops, models=["antifold"])
+```
+
+Those variants differ from the parent at ten or twenty positions at once, far
+outside the edit-distance range where any of these scorers was validated, and
+the harness cannot tell you about that regime either, because the published
+affinity datasets do not cover it. Treat the ranking as a hypothesis generator.
+
+The old three-step API is still there under `design_pipeline.denovo`
+(`make_protein_backbones`, `design_sequences`, `predict_structure`), with
+`score_designs` in `design_pipeline.scoring` and `select` in
+`design_pipeline.designs`. See [examples/refine.py](examples/refine.py) and
+[examples/fanout.py](examples/fanout.py):
 
 ```bash
-.venv/bin/python examples/refine.py            # real models
 .venv/bin/python examples/refine.py --dummy    # fixtures, offline
 ```
 
@@ -388,14 +640,24 @@ Run it:
 
 ## 6. Output layout, caching and seeds
 
-Each step writes to `output_dir/<key>/`, where `<key>` hashes the resolved
-config, the seed, and the content and ids of the input files:
+Each run writes to `output_dir/<key>/`. For `get_structure` and the de novo
+branch, `<key>` hashes the resolved config, the seed, and the content and ids
+of the input files. For `score_variants` and `gate` it hashes (structure
+content, candidate set, model name, kwargs) — per scorer rather than per step,
+which is what keeps a finished column alive when the scorer set changes:
 
 ```
-runs/v1/bb/2e3eb49f1a0c4b77/
-    design_0.pdb
-    design_1.pdb
-    DONE                     <- the design records: paths, scores, parent ids
+runs/her2_v1/4f1c90ab77e2d305/
+    1n8z.pdb
+    DONE                      <- the records: paths, scores, parent ids
+runs/her2_v1/variants/B_singles.parquet
+runs/her2_v1/scores/
+    9ad3e7c1b4028f66/         <- antifold over these candidates
+        candidates.csv
+        scores.csv
+        DONE
+    c70b1e55d9a34f82/         <- esm_if over the same ones
+    scored_B_singles.parquet  <- the joined table
 ```
 
 - A directory with a `DONE` marker is skipped and its records returned, so
@@ -422,7 +684,11 @@ visible and the command being run is echoed to stderr.
 | `MissingDependencyError` | A model's package or entry point is missing (`colabfold_batch`, `ligandmpnn`, `boltz`, `protenix`, `chai_lab`). The message names the extra; for MPNN see the separate-environment note in section 4. |
 | `MissingGPUError` | `chai`, `boltz` or `protenix` on a non-Linux host, a node with no CUDA GPU, or (Chai-1 only) a card older than Ampere. Move to a GPU node, pick another model, or use the matching `dummy_*` model. |
 | `MissingLigandError` | `ligand_mpnn` on a backbone with no ligand. Use `protein_mpnn` or `soluble_mpnn`, or supply a structure that carries the ligand. |
-| `UnknownModelError` | Typo in `model_name`; the message lists the registered ones. |
+| `UnknownModelError` | Typo in a `model_name`, a `models=[...]` entry or a `checks=[...]` entry; the message lists the registered ones. |
+| `MissingDependencyError: ... OAS` | `consensus` needs a frequency table. Point `frequencies=` at a CSV of `imgt,aa,frequency`, set `DESIGN_PIPELINE_OAS_TABLE`, or drop it from `models=[...]`. |
+| `ValueError: ... max_variants` | A per-variant scorer on an uncapped table of thousands. Rank on the column you trust, then pass `max_variants=n`. |
+| `ValueError: ... does not match` | A variant id whose wild-type residue is not what the structure holds at that position: the numbering differs (IMGT or Kabat rather than chain positions), or it is the wrong chain. |
+| `gate dropped every ... candidates` | A threshold too strict for a weak predictor. The reasons are in the annotated table the warning names. |
 | `RunFailedError: exit code N` | The model itself failed. Its output was streamed above the traceback — read that, not the traceback. |
 | `RunFailedError: ... wrote nothing matching` | The container ran and exited 0 but produced no output files. Usually a wrong output path or a silently skipped input. |
 | Docker pull 404 | The image name needs verifying; build locally and override the adapter (section 4). |

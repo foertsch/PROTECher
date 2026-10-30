@@ -11,9 +11,9 @@ from design_pipeline import (
     MissingDependencyError,
     MissingLigandError,
     Design,
-    design_sequences,
     get_adapter,
 )
+from design_pipeline.denovo import design_sequences
 from design_pipeline.adapters import _mpnn
 from design_pipeline.adapters._mpnn import MODEL_TYPES, MPNNAdapter, header_scores
 

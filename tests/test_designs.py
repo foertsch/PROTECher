@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from design_pipeline import Design, lineage, select, to_dataframe
+from design_pipeline import Design
+from design_pipeline.designs import lineage, select, to_dataframe
 
 
 def make(
