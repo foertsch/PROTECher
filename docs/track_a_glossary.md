@@ -28,11 +28,11 @@ Terms used in the Track A plan: choose 15 scFv variants of an announced breast c
 ## Scores and models
 
 - **Language model (ESM-1b, ESM-1v, ESM-2):** A model trained on protein sequences that gives each amino acid a probability at each position, given the rest of the sequence. It scores how natural a substitution looks.
-- **Zero-shot:** Scoring without training on measured data for this antibody. Adaptyv's po101 blog advises zero-shot language-model scores when the budget is small.
+- **Zero-shot:** Scoring without training on measured data for this antibody. Adaptyv's po101 post says zero-shot predictors can design a starting library when the property follows evolutionary or stability signals.
 - **Log-likelihood ratio (LLR):** The log of the probability of the new residue divided by the probability of the parent residue at that position. Above zero means the model finds the substitution at least as natural as the parent.
 - **Masked marginal:** A way to compute an LLR for every substitution at a site in one pass: hide the residue, read the model's probabilities for all 20 amino acids. It makes scoring all single substitutions cheap.
 - **Consensus rule (Hie):** Keep a substitution when its likelihood ratio exceeds 1 (their α = 1) in at least k of six models (ESM-1b plus five ESM-1v), and when at least one model ranks it highest at that site. k was set between 1 and 4 per antibody. 06 uses 2 as the common value. Measured on Fab and IgG, not scFv.
-- **Inverse folding (ESM-IF1, AntiFold, ProteinMPNN):** Models that take a backbone structure and score how well each sequence fits it. With the antigen in the input they see the interface as well. AntiFold is trained on antibodies.
+- **Inverse folding (ESM-IF1, AntiFold, ProteinMPNN, SolubleMPNN):** Models that take a backbone structure and score how well each sequence fits it. With the antigen in the input they see the interface as well. AntiFold is trained on antibodies. SolubleMPNN is ProteinMPNN retrained on soluble proteins, and Adaptyv recommends it as a final expression check.
 - **ΔΔG (FoldX, Rosetta):** The predicted change in stability or binding energy from a substitution. Negative means more favourable. 06 reports weak to moderate agreement with measurements on AB-Bind (abstract-level source).
 - **Co-folding model (Boltz-2):** Predicts the structure of the scFv with the antigen together. On the known trastuzumab scFv plus a HER2 fragment, Boltz-2 gave ipTM 0.94, so a known complex scores high before any mutation.
 - **Seed noise:** The spread of a score when the same input is folded with different random seeds. A veto threshold must sit outside it. 06 proposes the parent's mean minus 2 SD (06's own).
