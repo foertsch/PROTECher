@@ -23,9 +23,9 @@ from design_pipeline import (
     MissingGPUError,
     RunFailedError,
     get_adapter,
-    predict_structure,
-    score_designs,
 )
+from design_pipeline.denovo import predict_structure
+from design_pipeline.scoring import score_designs
 from design_pipeline.adapters import _boltz, _chai, _dummy, _folding, _protenix
 from design_pipeline.adapters._boltz import BoltzAdapter
 from design_pipeline.adapters._chai import ChaiAdapter
@@ -580,7 +580,7 @@ def test_the_dummies_report_the_same_keys_as_the_real_adapters(tmp_path, sequenc
 def test_a_model_list_folds_every_sequence_with_both_models(tmp_path) -> None:
     """Two predictors over one pool of sequences, which is what the list form
     is for: both producers come back, each prediction on its own sequence."""
-    from design_pipeline import design_sequences, make_protein_backbones
+    from design_pipeline.denovo import design_sequences, make_protein_backbones
 
     target = tmp_path / "target.pdb"
     target.write_text("ATOM      1  CA  GLY A   1       0.000   0.000   0.000\n")

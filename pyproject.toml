@@ -1,18 +1,32 @@
 [project]
 name = "design-pipeline"
 version = "0.2.0"
-description = "Iterative protein design: three model steps plus scoring, swappable by name."
+description = "Antibody affinity maturation: get a structure, score every variant, gate, pair."
 readme = "README.md"
 requires-python = ">=3.11"
-# Scoring needs these and they are light. No torch, no jax.
+# Every run needs these and they are all light. No torch, no jax: importing
+# design_pipeline must not import a model.
 dependencies = [
     "numpy>=1.26",
     # 2.0 changed superimpose() to return a transformation; scoring relies on it.
     "biotite>=2.0",
+    # The variant table. pandas rather than polars because the analysis the
+    # harness output gets handed to afterwards is pandas, and this package
+    # already spoke it.
+    "pandas>=2.0",
+    # pandas writes parquet through one of these; pyarrow is the one that is
+    # actually maintained for it.
+    "pyarrow>=15",
 ]
 
 [project.optional-dependencies]
-# Container adapters (rfdiffusion, proteinmpnn) need no Python dependency at all.
+# IMGT position labels. An extra rather than a core dependency because ANARCI
+# needs HMMER on PATH, which is awkward on a laptop and awkward in CI. Without
+# it the `imgt` column is empty and a warning says so; nothing else changes,
+# because every join in this package is on chain positions.
+numbering = ["anarci"]
+# Container adapters (the scorers, the gate checks, rfdiffusion) need no Python
+# dependency at all.
 #
 # The four co-folding models are one extra each: all need Linux and a CUDA GPU,
 # they pin torch against each other, and a campaign uses one or two of them.
@@ -31,8 +45,7 @@ colabfold = ["colabfold[alphafold]>=1.5"]
 # core may not resolve; the adapter shells out, so the supported fallback is a
 # separate environment plus `executable="/path/to/env/bin/ligandmpnn"`.
 mpnn = ["ligandmpnn>=0.1.2"]
-analysis = ["pandas>=2.0"]
-dev = ["pytest>=8", "pandas>=2.0"]
+dev = ["pytest>=8"]
 
 [build-system]
 requires = ["hatchling"]
@@ -43,3 +56,7 @@ packages = ["design_pipeline"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The suite runs without ANARCI - it needs HMMER, which is why it is an extra -
+# and the degradation warning on every variant table would drown the output.
+# The tests that care assert the empty `imgt` column directly.
+filterwarnings = ["ignore:anarci is not installed:RuntimeWarning"]

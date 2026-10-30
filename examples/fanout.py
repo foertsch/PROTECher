@@ -14,6 +14,10 @@ mixed pool, and two predictors do not report the same metrics, so filter to one
 producer before `select`.
 
     python examples/fanout.py --dummy
+
+This is the optional de novo branch, not the default path. The public API is
+affinity maturation (see examples/maturation.py); these steps live in
+`design_pipeline.denovo` and are reached from `diffuse_loops`.
 """
 
 from __future__ import annotations
@@ -22,13 +26,13 @@ import sys
 
 from collections import Counter
 
-from design_pipeline import (
+from design_pipeline.denovo import (
     design_sequences,
     make_protein_backbones,
     predict_structure,
-    score_designs,
-    select,
 )
+from design_pipeline.designs import select
+from design_pipeline.scoring import score_designs
 
 dummy = "--dummy" in sys.argv
 target_pdb = "examples/target_stub.pdb" if dummy else "inputs/target.pdb"
