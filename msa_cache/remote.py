@@ -8,6 +8,9 @@ stand-in `boltz`; cloud/modal_fold.py is the thin layer that moves the folders.
     run_staged("stage/run1", seed=0)                                          # remotely: folds into stage/run1/out
     localize_manifest("out/", remote_out="/work/run1/out")                    # locally, after the download
 
+Several seeds fold in parallel, one container each, so each seed gets its own output folder (`out_name`), and
+`seed_spread` turns the per-seed results into the mean and SD of ipTM per design, the seed noise the veto needs.
+
 Only the standard library is imported on the staging side, so it runs in a bare Modal client environment.
 """
 
@@ -15,8 +18,9 @@ from __future__ import annotations
 
 import json
 import shutil
+import statistics
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from .batch import fold_batch
 from .cache import MAX_MISMATCH_FRACTION, CacheError, MsaCache, _best_offset
@@ -71,14 +75,17 @@ def stage(designs_dir: Path | str, cache_dir: Path | str, dest: Path | str, orde
     return ids
 
 
-def run_staged(workdir: Path | str, seed: int = 0) -> list:
-    """Fold everything staged in workdir with fold_batch, in the staged order, into workdir/out."""
+def run_staged(workdir: Path | str, seed: int = 0, out_name: str = "out") -> list:
+    """Fold everything staged in workdir with fold_batch, in the staged order, into workdir/<out_name>.
+
+    Seeds folded at the same time must not share a folder, so the caller names one per seed.
+    """
     from design_pipeline import Design
 
     workdir = Path(workdir)
     ids = (workdir / "designs" / ORDER).read_text().split()
     designs = [Design(id=i, path=workdir / "designs" / f"{i}.fa", parent_id=None, producer="manual") for i in ids]
-    return fold_batch(MsaCache(workdir / "cache"), designs, workdir / "out", seed=seed)
+    return fold_batch(MsaCache(workdir / "cache"), designs, workdir / out_name, seed=seed)
 
 
 def localize_manifest(out_dir: Path | str, remote_out: str) -> int:
@@ -99,3 +106,22 @@ def localize_manifest(out_dir: Path | str, remote_out: str) -> int:
                 changed += 1
     marker.write_text(json.dumps(records, indent=1))
     return changed
+
+
+def seed_spread(results: Sequence[Mapping]) -> list[tuple[str, int, float, float | None]]:
+    """(design, seeds, mean ipTM, SD) per design, from one remote result per seed.
+
+    Each result carries `designs`, a list of `{"id", "scores"}`, as the remote fold returns it. The SD is the sample
+    SD (n - 1) and needs at least two seeds; with one it is None. A design with no ipTM in any seed is left out.
+    Designs come back in the order they were first seen.
+    """
+    iptm: dict[str, list[float]] = {}
+    for result in results:
+        for design in result["designs"]:
+            value = design["scores"].get("iptm")
+            if value is not None:
+                iptm.setdefault(design["id"], []).append(float(value))
+    return [
+        (name, len(values), statistics.mean(values), statistics.stdev(values) if len(values) > 1 else None)
+        for name, values in iptm.items()
+    ]
