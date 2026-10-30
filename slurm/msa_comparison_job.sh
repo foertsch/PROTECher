@@ -10,8 +10,10 @@
 #
 #   slurm/submit_with_report.sh msa_cache_01 slurm/msa_comparison_job.sh -- --parent wt_model --label cached-msa
 set -euo pipefail
-. /scratch/foertsch/protecher_tools/env.sh
-cd "${CODE:-/scratch/foertsch/protecher}"
+. "${PROTECHER_CONFIG:-$HOME/.config/protecher/cluster.env}"
+: "${PROTECHER_SCRATCH:?PROTECHER_SCRATCH is not set, copy slurm/cluster.env.example to ~/.config/protecher/cluster.env}"
+. "$PROTECHER_SCRATCH/protecher_tools/env.sh"
+cd "${CODE:-$PROTECHER_SCRATCH/protecher}"
 : "${RUN_DIR:?RUN_DIR is not set, start this through slurm/submit_with_report.sh}"
 
 .venv/bin/python - <<'PY'
@@ -109,4 +111,4 @@ piv = df[df.seed == 0].pivot(index="design", columns="condition", values="ipTM")
 print("ipTM, cached minus server per design:", (piv["cached"] - piv["server"]).round(4).to_dict())
 print("ipTM, none minus server per design:", (piv["none"] - piv["server"]).dropna().round(4).to_dict())
 PY
-cp "${CODE:-/scratch/foertsch/protecher}/runs/test_01/designs_meta.csv" "$RUN_DIR/designs_meta.csv"
+cp "${CODE:-$PROTECHER_SCRATCH/protecher}/runs/test_01/designs_meta.csv" "$RUN_DIR/designs_meta.csv"

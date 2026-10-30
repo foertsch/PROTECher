@@ -9,15 +9,17 @@
 #    with the server run (test_01, server called per design) and with the run that reused test_01's own
 #    fragment alignment (msa_helper_01). Same seed 0 throughout, so structures can be compared directly.
 #
-#   CACHE_ROOT  default /scratch/foertsch/protecher_cache/msa_candidates
+#   CACHE_ROOT  default $PROTECHER_SCRATCH/protecher_cache/msa_candidates
 #   ONLY        comma-separated candidate names for step 1, default all
 #
 # Needs a free GPU on the node that holds the install. From the laptop:
-#   ssh foertsch@fgcz-c-043 'sbatch --parsable -p GPU_L40S -w fgcz-r-023 --gres=gpu:1 --cpus-per-task=8 --mem=32G \
+#   ssh login '. ~/.config/protecher/cluster.env; sbatch --parsable -p $PROTECHER_GPU_PARTITION -w $PROTECHER_GPU_NODE --gres=gpu:1 --cpus-per-task=8 --mem=32G \
 #     -t 01:00:00 -J msa_candidates_check -o $HOME/protecher_logs/msa_candidates_check_%j.out' < slurm/msa_candidates_check_job.sh
 set -euo pipefail
-. /scratch/foertsch/protecher_tools/env.sh
-cd "${CODE:-/scratch/foertsch/protecher}"
+. "${PROTECHER_CONFIG:-$HOME/.config/protecher/cluster.env}"
+: "${PROTECHER_SCRATCH:?PROTECHER_SCRATCH is not set, copy slurm/cluster.env.example to ~/.config/protecher/cluster.env}"
+. "$PROTECHER_SCRATCH/protecher_tools/env.sh"
+cd "${CODE:-$PROTECHER_SCRATCH/protecher}"
 
 .venv/bin/python - <<'PY'
 import glob
@@ -34,7 +36,7 @@ from design_pipeline.cache import read_manifest
 from design_pipeline.scoring import sc_rmsd
 from msa_cache import MsaCache, use_cached_msas
 
-root = Path(os.environ.get("CACHE_ROOT", "/scratch/foertsch/protecher_cache/msa_candidates"))
+root = Path(os.environ.get("CACHE_ROOT", os.environ["PROTECHER_SCRATCH"] + "/protecher_cache/msa_candidates"))
 only = [n for n in os.environ.get("ONLY", "").split(",") if n]
 names = [p.parent.name for p in sorted(root.glob("*/parent.json")) if not only or p.parent.name in only]
 failed = []

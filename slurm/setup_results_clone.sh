@@ -2,9 +2,11 @@
 # One-off, run on the GPU node (node-local scratch): create the clone that report jobs publish from,
 # and the `results` branch on GitHub if it does not exist. The branch holds only reports/ and
 # LEADERBOARD.md, so it cannot break the code on main.
-#   ssh login 'sbatch -p GPU_L40S -w fgcz-r-023 ...' < slurm/setup_results_clone.sh
+#   ssh login '. ~/.config/protecher/cluster.env; sbatch -p $PROTECHER_GPU_PARTITION -w $PROTECHER_GPU_NODE ...' < slurm/setup_results_clone.sh
 set -euo pipefail
-RESULTS=${RESULTS:-/scratch/foertsch/protecher_results}
+. "${PROTECHER_CONFIG:-$HOME/.config/protecher/cluster.env}"
+: "${PROTECHER_SCRATCH:?PROTECHER_SCRATCH is not set, copy slurm/cluster.env.example to ~/.config/protecher/cluster.env}"
+RESULTS=${RESULTS:-$PROTECHER_SCRATCH/protecher_results}
 URL=${REPO_URL:-git@github.com:foertsch/PROTECher.git}
 
 if [ -d "$RESULTS/.git" ]; then echo "already set up: $RESULTS"; exit 0; fi

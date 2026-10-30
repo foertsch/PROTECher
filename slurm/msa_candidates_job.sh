@@ -6,18 +6,20 @@
 # stored alignments afterwards, which needs a GPU.
 #
 # Output, per candidate:  $CACHE_ROOT/<name>/{parent.json,parent_0.csv,parent_1.csv,candidate.json}
-#   CACHE_ROOT  node-local scratch, where the jobs read it   (default /scratch/foertsch/protecher_cache/msa_candidates)
+#   CACHE_ROOT  node-local scratch, where the jobs read it   (default $PROTECHER_SCRATCH/protecher_cache/msa_candidates)
 #   BACKUP_DIR  home on the shared filesystem, a backup in case scratch is cleaned (default ~/protecher_msa_candidates)
 #   ONLY        comma-separated candidate names to fetch, default all
 # A candidate whose cache already holds the same chains is skipped, so the job can be rerun.
 #
 # Not a design run, so it is not submitted with submit_with_report.sh. Pinned to the node that holds the
 # install, without a GPU, so it does not wait behind GPU jobs. From the laptop:
-#   ssh foertsch@fgcz-c-043 'sbatch --parsable -p GPU_L40S -w fgcz-r-023 --cpus-per-task=4 --mem=16G \
+#   ssh login '. ~/.config/protecher/cluster.env; sbatch --parsable -p $PROTECHER_GPU_PARTITION -w $PROTECHER_GPU_NODE --cpus-per-task=4 --mem=16G \
 #     -t 01:00:00 -J msa_candidates -o $HOME/protecher_logs/msa_candidates_%j.out' < slurm/msa_candidates_job.sh
 set -euo pipefail
-. /scratch/foertsch/protecher_tools/env.sh
-cd "${CODE:-/scratch/foertsch/protecher}"
+. "${PROTECHER_CONFIG:-$HOME/.config/protecher/cluster.env}"
+: "${PROTECHER_SCRATCH:?PROTECHER_SCRATCH is not set, copy slurm/cluster.env.example to ~/.config/protecher/cluster.env}"
+. "$PROTECHER_SCRATCH/protecher_tools/env.sh"
+cd "${CODE:-$PROTECHER_SCRATCH/protecher}"
 
 .venv/bin/python - <<'PY'
 import json
@@ -29,7 +31,7 @@ from pathlib import Path
 
 from msa_cache import CANDIDATES, MsaCache, fetch_alignments, resolve
 
-root = Path(os.environ.get("CACHE_ROOT", "/scratch/foertsch/protecher_cache/msa_candidates"))
+root = Path(os.environ.get("CACHE_ROOT", os.environ["PROTECHER_SCRATCH"] + "/protecher_cache/msa_candidates"))
 backup = Path(os.environ.get("BACKUP_DIR", str(Path.home() / "protecher_msa_candidates")))
 only = [n for n in os.environ.get("ONLY", "").split(",") if n]
 root.mkdir(parents=True, exist_ok=True)

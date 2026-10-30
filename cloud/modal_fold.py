@@ -30,7 +30,7 @@ import modal  # noqa: E402
 from msa_cache.remote import localize_manifest, read_chains, stage  # noqa: E402
 
 GPU = os.environ.get("PROTECHER_MODAL_GPU", "L40S")
-BOLTZ_VERSION = "2.2.1"  # the versions installed on fgcz-r-023, so results stay comparable
+BOLTZ_VERSION = "2.2.1"  # the versions installed on the cluster GPU node, so results stay comparable
 TORCH_VERSION = "2.15.0"
 
 app = modal.App("protecher-fold")
@@ -50,7 +50,7 @@ image = (
     .add_local_python_source("design_pipeline", "msa_cache")
 )
 
-CLUSTER_SEED0 = {  # run msa_batch_01 on fgcz-r-023: batch of five in this order, seed 0, ipTM and pLDDT
+CLUSTER_SEED0 = {  # run msa_batch_01 on the cluster GPU node: batch of five in this order, seed 0, ipTM and pLDDT
     "wt": (0.937, 91.88),
     "v1": (0.929, 92.20),
     "v2": (0.854, 92.12),

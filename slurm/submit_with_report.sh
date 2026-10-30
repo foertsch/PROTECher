@@ -9,18 +9,22 @@
 # Example:  slurm/submit_with_report.sh boltz_wt_01 ./my_gpu_job.sh -- --parent wt --label "parent only"
 #
 # REPORT_ARGS go through sbatch --export, so they must not contain commas.
-# Environment: CLUSTER_SSH (default foertsch@fgcz-c-043), NODE (default fgcz-r-023), PARTITION (GPU_L40S),
-#              GPU_TIME (default 02:00:00), CODE (default /scratch/foertsch/protecher)
+# Environment: read from ~/.config/protecher/cluster.env on the laptop (template: slurm/cluster.env.example): CLUSTER_SSH,
+#              PROTECHER_GPU_NODE and PROTECHER_GPU_PARTITION (overridable as NODE and PARTITION), PROTECHER_SCRATCH.
+#              GPU_TIME (default 02:00:00), CODE (default $PROTECHER_SCRATCH/protecher on the cluster)
 set -euo pipefail
 
-CLUSTER_SSH=${CLUSTER_SSH:-foertsch@fgcz-c-043}
-NODE=${NODE:-fgcz-r-023}
-PARTITION=${PARTITION:-GPU_L40S}
+. "${PROTECHER_CONFIG:-$HOME/.config/protecher/cluster.env}"
+: "${CLUSTER_SSH:?CLUSTER_SSH is not set, copy slurm/cluster.env.example to ~/.config/protecher/cluster.env}"
+: "${PROTECHER_GPU_NODE:?PROTECHER_GPU_NODE is not set in the cluster config}" "${PROTECHER_GPU_PARTITION:?PROTECHER_GPU_PARTITION is not set in the cluster config}"
+: "${PROTECHER_SCRATCH:?PROTECHER_SCRATCH is not set, copy slurm/cluster.env.example to ~/.config/protecher/cluster.env}"
+NODE=${NODE:-$PROTECHER_GPU_NODE}
+PARTITION=${PARTITION:-$PROTECHER_GPU_PARTITION}
 GPU_TIME=${GPU_TIME:-02:00:00}
-CODE=${CODE:-/scratch/foertsch/protecher}
+CODE=${CODE:-$PROTECHER_SCRATCH/protecher}
 HERE=$(cd "$(dirname "$0")" && pwd)
 
-[ $# -ge 2 ] || { sed -n '2,12p' "$0"; exit 1; }
+[ $# -ge 2 ] || { sed -n '2,14p' "$0"; exit 1; }
 RUN_ID=$1; GPU_SCRIPT=$2; shift 2
 [ "${1:-}" = "--" ] && shift
 REPORT_ARGS="$*"

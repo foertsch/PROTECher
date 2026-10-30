@@ -10,8 +10,10 @@
 #
 #   slurm/submit_with_report.sh msa_batch_seeds_01 slurm/msa_batch_seeds_job.sh -- --parent wt_model --label batch-vs-solo-seeds
 set -euo pipefail
-. /scratch/foertsch/protecher_tools/env.sh
-cd "${CODE:-/scratch/foertsch/protecher}"
+. "${PROTECHER_CONFIG:-$HOME/.config/protecher/cluster.env}"
+: "${PROTECHER_SCRATCH:?PROTECHER_SCRATCH is not set, copy slurm/cluster.env.example to ~/.config/protecher/cluster.env}"
+. "$PROTECHER_SCRATCH/protecher_tools/env.sh"
+cd "${CODE:-$PROTECHER_SCRATCH/protecher}"
 : "${RUN_DIR:?RUN_DIR is not set, start this through slurm/submit_with_report.sh}"
 
 .venv/bin/python - <<'PY'

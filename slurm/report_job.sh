@@ -7,12 +7,15 @@
 #   RUN_ID, RUN_DIR   the run to report on
 #   REPORT_ARGS       extra arguments for `python -m run_report build` (e.g. "--parent wt --label test")
 #   GPU_JOB_ID        recorded in the report
-# Optional overrides: CODE, RESULTS, TOOLS
+# Optional overrides: CODE, RESULTS, TOOLS. Paths default to $PROTECHER_SCRATCH, read from the cluster config
+# (slurm/cluster.env.example).
 set -euo pipefail
 
-CODE=${CODE:-/scratch/foertsch/protecher}
-RESULTS=${RESULTS:-/scratch/foertsch/protecher_results}
-TOOLS=${TOOLS:-/scratch/foertsch/protecher_tools}
+. "${PROTECHER_CONFIG:-$HOME/.config/protecher/cluster.env}"
+: "${PROTECHER_SCRATCH:?PROTECHER_SCRATCH is not set, copy slurm/cluster.env.example to ~/.config/protecher/cluster.env}"
+CODE=${CODE:-$PROTECHER_SCRATCH/protecher}
+RESULTS=${RESULTS:-$PROTECHER_SCRATCH/protecher_results}
+TOOLS=${TOOLS:-$PROTECHER_SCRATCH/protecher_tools}
 : "${RUN_ID:?RUN_ID is not set}" "${RUN_DIR:?RUN_DIR is not set}"
 
 . "$TOOLS/env.sh"
