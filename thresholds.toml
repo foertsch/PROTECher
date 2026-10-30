@@ -1,0 +1,48 @@
+# Headline metrics and thresholds for run reports (python -m run_report).
+# A design is "ok" on a metric when it reaches `target`, "warn" when it passes the
+# `gate` but misses the target, and "fail" when it is worse than the gate.
+# A design passes when it fails no gate. A metric a design does not have is skipped.
+# Starting values come from docs/filtering_strategy.md. Change them here, in one place.
+# Keys are the score names in design_pipeline (plddt is 0 to 100).
+
+[run]
+x = "iptm"      # horizontal axis of the scatter plot and the primary metric
+y = "plddt"
+group = "meta_group"   # optional meta column that colours the scatter plot
+
+[[metric]]
+key = "iptm"
+label = "ipTM"
+better = "higher"
+target = 0.8
+gate = 0.5
+
+[[metric]]
+key = "plddt"
+label = "pLDDT"
+better = "higher"
+target = 85
+gate = 80
+digits = 1
+
+[[metric]]
+key = "ptm"
+label = "pTM"
+better = "higher"
+target = 0.8
+digits = 2
+
+[[metric]]
+key = "pae_interaction"
+label = "interface PAE (A)"
+better = "lower"
+target = 6
+gate = 10
+digits = 1
+
+[[metric]]
+key = "ipsae"
+label = "ipSAE"
+better = "higher"
+target = 0.7
+gate = 0.5
