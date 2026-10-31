@@ -151,6 +151,21 @@ def test_preflight_lists_every_adapter_and_fails_on_a_short_campaign(capsys) -> 
     assert "default campaign NOT ready here" in printed
 
 
+def test_preflight_says_when_antifold_still_needs_its_source_folder(monkeypatch) -> None:
+    """The table route reads ANTIFOLD_SRC. That does not decide `resolved`, since
+    `antifold_src=` can stand in for it, but the row has to say it is missing."""
+    monkeypatch.setenv("DESIGN_PIPELINE_ANTIFOLD", "/opt/af/bin/python")
+    monkeypatch.delenv("ANTIFOLD_SRC", raising=False)
+
+    unset = {row[0]: row for row in preflight.rows(["antifold", "antifold_seq"])}
+    assert unset["antifold"][3] == "yes"
+    assert "(ANTIFOLD_SRC not set)" in unset["antifold"][4]
+    assert "ANTIFOLD_SRC" not in unset["antifold_seq"][4]
+
+    monkeypatch.setenv("ANTIFOLD_SRC", "/opt/af/src")
+    assert "ANTIFOLD_SRC" not in preflight.rows(["antifold"])[0][4]
+
+
 def test_preflight_probes_nothing_it_cannot_probe_cheaply() -> None:
     """A container route resolves on the pin, not on a pull: checking it
     properly means 8 GB, and preflight has to be runnable on a login node."""

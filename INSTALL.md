@@ -90,6 +90,14 @@ export DESIGN_PIPELINE_ANTIFOLD=/opt/envs/antifold/bin/python
 export DESIGN_PIPELINE_THERMOMPNN=/opt/envs/thermompnn/bin/thermompnn
 ```
 
+`antifold` is run through the repo's `antifold_score` module, and its table route
+needs a second variable: `ANTIFOLD_SRC`, the AntiFold source folder that holds
+`models/model.pt` (or `antifold_src=` as a keyword argument). Without it the run
+stops with `--route table needs --table, or --antifold_src (or ANTIFOLD_SRC)`.
+`preflight` still lists `antifold` as resolved and adds `(ANTIFOLD_SRC not set)`
+to its row. `antifold` scores single mutations only; for pairs and larger sets
+use `antifold_seq`.
+
 #### AntiFold cannot go in Env A
 
 `pip install antifold` pins `torch==2.3.1`, `torch-geometric==2.4.0`,
@@ -528,7 +536,10 @@ scores = score_variants(
 survivors = gate(scores, checks=["liabilities"])
 pairs = select_pairs(survivors, max_pairs=20, min_distance=10.0,
                      by="score_antifold")
-pair_scores = score_variants(complex_, pairs, models=["antifold", "gearbind"])
+# a pair has two mutations: `antifold`'s lookup has no answer, `antifold_seq`
+# scores each pair as a whole and needs the chain ids
+pair_scores = score_variants(complex_, pairs, models=["antifold_seq"],
+                             heavy="B", light="A")
 ```
 
 `get_structure` returns a `Complex`: the structure files it wrote plus the

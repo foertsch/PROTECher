@@ -90,6 +90,10 @@ class Route:
     """The variable that points at this tool's interpreter or binary, for an
     Env B route. The same variable the adapter reads, so preflight and the run
     agree about where the tool is."""
+    needs_env: tuple[str, ...] = ()
+    """Further variables the adapter's command reads. They do not decide
+    `resolve`, because a keyword argument can stand in for each, so preflight
+    only reports the ones that are unset."""
     note: str = ""
 
 
@@ -126,6 +130,7 @@ ROUTES: Mapping[str, Route] = {
         verified=True,
         module="antifold",
         env_var="DESIGN_PIPELINE_ANTIFOLD",
+        needs_env=("ANTIFOLD_SRC",),
         note=(
             "PyPI 0.3.1, BSD-3. Scored through the repo's antifold_score module, "
             "which also needs ANTIFOLD_SRC: the AntiFold source folder that "
