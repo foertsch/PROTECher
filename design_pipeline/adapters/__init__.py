@@ -28,6 +28,7 @@ from ._rfdiffusion import rfdiffusion
 from ._scorers import (
     abmpnn,
     antifold,
+    antifold_seq,
     consensus,
     dummy_per_variant,
     dummy_scorer,
@@ -64,6 +65,7 @@ __all__ = [
     "dummy_predictor",
     # step 3, scoring
     "antifold",
+    "antifold_seq",
     "esm_if",
     "abmpnn",
     "proteinmpnn_score",

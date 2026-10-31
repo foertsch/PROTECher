@@ -374,6 +374,39 @@ antifold = ContainerScorer(
     # higher-is-better.
     sign=1.0,
 )
+
+# The whole-sequence counterpart of `antifold`. The matrix scorer above is exact
+# for a single mutation and has no answer for several; this one asks AntiFold's
+# own score_sequence_in_complex how likely the mutant chain is given the
+# backbone, one forward pass per mutated chain, so a multi-mutation candidate is
+# scored as a whole and never as a sum. It disagrees with the lookup on a single
+# mutation (20 trastuzumab singles: correlation 0.81), so it is its own column
+# and not a replacement. The script runs in AntiFold's environment, by path, and
+# imports nothing from this package.
+#
+# `per_variant` because it is one forward pass per candidate, about 0.7 s on a
+# CPU (measured on 1N8Z), so the uncapped-table guard in score_variants applies:
+# a scan of all 4,598 singles is about an hour. Needs AntiFold 0.4.0 or later;
+# chain ids and, to reuse a download, `weights=` go in as keyword arguments.
+ANTIFOLD_SEQ_SCRIPT = Path(__file__).with_name("_antifold_seq.py")
+antifold_seq_process = ProcessAdapter(
+    tool="antifold_seq",
+    executable="python",
+    command=(str(ANTIFOLD_SEQ_SCRIPT),),
+    env_var="DESIGN_PIPELINE_ANTIFOLD",
+    input_template=("--pdb", "{path}"),
+    output_template=("--out_dir", "{path}"),
+    aliases={"candidates": "mutations_csv"},
+    path_kwargs=("candidates",),
+    output_globs=("antifold_seq.csv",),
+)
+antifold_seq = ContainerScorer(
+    name="antifold_seq",
+    tool=antifold_seq_process,
+    # A log-likelihood ratio against the wild type: already higher-is-better.
+    sign=1.0,
+    per_variant=True,
+)
 esm_if = ContainerScorer(
     name="esm_if",
     # ESM-IF is also pip-installable, but only alongside torch; the container
