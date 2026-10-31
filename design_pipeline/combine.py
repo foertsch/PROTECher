@@ -6,7 +6,8 @@ loop, like the rest of `variants`: nothing here runs a model, so nothing here is
 
     sets = propose_sets(survivors, by="score_antifold", regions=regions)     # singles -> candidate sets
     scored = score_variants(complex_, sets, models=["antifold_seq"], ...)    # the caller scores them whole
-    designs = pick_designs(scored, by="score_antifold_seq", regions=regions, quota={5: 6, 6: 4, 7: 3, 9: 2})
+    designs = pick_designs(scored, by="score_antifold_seq", regions=regions,
+                           quota={5: 3, 6: 3, 7: 3, 8: 2, 9: 2, 10: 2})      # one entry per size the sets hold
     table = frontier(scored, by="score_antifold_seq")                        # best score at each mutation count
 
 Scoring is not done here, on purpose. A set's score is not a function of its singles' scores, so nothing in this
@@ -64,35 +65,69 @@ def propose_sets(
     output_dir: Path | str | None = None,
     *,
     by: str,
-    pool: int = 30,
-    min_distance: float = 4.0,
+    pool: int = 45,
+    min_distance: float = 8.0,
     regions: Regions | None = None,
-    limits: Mapping[str, int] | None = None,
+    max_per_set: Mapping[str, int] | None = None,
+    skip: Iterable[str] = (),
+    per_position: int | None = 1,
+    bias: float = 0.0,
     seed: int = 0,
     structure: Path | str | None = None,
 ) -> VariantTable:
     """Draw candidate sets of several substitutions from the best singles. Returns them as a variant table.
 
     `by` names the score column that ranks the singles, so the ranking is the caller's and this function never
-    combines scores; the best `pool` of them are the shortlist. The pool sets how often a substitution can recur
-    across the designs picked later. Fifteen designs of about six substitutions are some 90 slots, and the plan wants
-    each substitution in two to four designs, so a pool of about 30 suits it better than the shortlist's full 60. In
-    a dry run on 1N8Z with the offline scorer (mechanics only, not science), 15 designs came from a pool of 30 with
-    one substitution of 29 in fewer than two designs, against 22 of 51 from a pool of 60. Too small a pool, 25
-    there, leaves too few designs that differ enough. Every set is a random greedy draw from the shortlist: the
-    singles are shuffled and taken in turn when
-    they fit, until the set has its size. A draw that cannot reach the size is dropped, and a set seen twice is
-    kept once, so the number returned per size can fall short of `per_size`; `config["found"]` says by how much.
+    combines scores. At most `per_position` singles are kept for each position, the best-scoring ones (`None` keeps
+    them all), and the best `pool` of those are the shortlist. The pool sets how often a substitution can recur
+    across the designs picked later: fifteen designs of about six substitutions are some 90 slots, and the plan wants
+    each substitution in two to four designs, which asks for some 22 to 45 distinct substitutions. The default pool
+    is 45, from a run on 1N8Z with real `antifold_seq` scores (the constant domain skipped, `per_position=1`, 8 Å,
+    300 sets per size, no isoelectric point rule, 15 designs split equally over the sizes). A pool of 30 filled 13 of
+    the 15 designs with one seed and 15 with another, and in that second run 7 of the 15 were size 5 instead of the
+    even split; 2 and 4 substitutions were in fewer than two designs. A pool of 45 filled all 15 with the 3, 3, 3, 2,
+    2, 2 split in both seeds, with 8 and 7 substitutions in fewer than two designs; a pool of 60 filled them too, with
+    12. So 45 is the smallest pool tried that fills the designs reliably, and the price is coverage: the plan's
+    minimum of two uses per substitution is reported, not enforced. That is two seeds, one structure and one scorer.
+    Re-run it on your own scores.
+
+    `per_position` matters on a real table. On 1N8Z chain B, with the table-route AntiFold score and the constant
+    domain left out, the best 30 singles sit on 8 positions, one of them with ten substitutions in the pool. A set
+    changes a position once, so no set of 9 or more can be drawn from that pool, and at the old 4 Å default nothing
+    beyond size 5. With one substitution per position the same pool spans 30 positions, and each size from 5 to 10
+    yields its full 100 sets at 4, 6 and 8 Å. A warning is raised when the pool has fewer positions than the
+    largest size. Every set is a random greedy draw from the shortlist: the singles are put in a random order and
+    taken in turn when they fit, until the set has its size. A draw that cannot reach the size is dropped, and a set
+    seen twice is kept once, so the number returned per size can fall short of `per_size`; `config["found"]` says
+    by how much.
 
     A set obeys these, checked as it grows:
 
     * one substitution per position;
-    * no two substitutions closer than `min_distance` angstroms, CA to CA, read off the structure the table
-      carries (residues along the chain without one, as in `select_pairs`). The plan's "within 4 Å" rule is
-      written for singles scored apart; the sets here are scored whole, so what is left is the physical one, two
-      neighbours changed at once, which 4 Å CA to CA excludes only for adjacent residues. Raise it to be stricter;
-    * at most `limits[label]` substitutions whose position has that label in `regions`, for example
-      `limits={"H3": 1}`. Positions with no label are not limited.
+    * no two substitutions closer than `min_distance` angstroms, CA to CA (8 by default), read off the structure
+      the table carries (residues along the chain without one, as in `select_pairs`). Scoring a set whole fixes
+      the arithmetic, not the physics: `antifold_seq` scores a mutant against the one fixed parent backbone, so it
+      cannot see the rearrangement that two interacting changes cause, and keeping substitutions apart is the only
+      guard against that here. The earlier default of 4 Å excluded only adjacent residues, because consecutive CAs
+      are about 3.8 Å apart. On 1N8Z, 8 Å still gives all sizes from 5 to 10 their full 100 sets with
+      `per_size=100`, `pool=30` and `per_position=1`; at 10 Å size 10 falls to 28. Raise it to be stricter, or pass 0
+      to switch the rule off (a pair that cannot be measured is still dropped);
+    * at most `max_per_set[label]` substitutions whose position has that label in `regions`, for example
+      `max_per_set={"H3": 1}`. Positions with no label are not limited.
+
+    `skip` names region labels whose singles are dropped before the pool is cut, for example `skip=("CH1",)` for
+    the constant domain of a Fab structure, which an scFv does not have. The order is: drop the skipped, keep the
+    best `pool` of the rest, then draw sets under `max_per_set`. Without it the pool is cut first, and on a Fab
+    structure the best singles by a structure-based score can be mostly constant domain (93 of the top 100 on 1N8Z
+    chain B with the table-route AntiFold score), which leaves a pool that cannot make a set of the size wanted.
+
+    Inside the pool the draw is uniform by default: rank 1 and rank 30 are taken equally often, and the score only
+    decides who is in the pool. `bias` changes that. A set is built by taking the pool in a random order, and with
+    `bias > 0` the order is drawn with weights proportional to `rank ** -bias`, so higher-ranked singles come
+    earlier and so recur more across the sets; `bias=0` is the uniform draw and gives the sets it always did. The
+    greedy draw, which takes a single if it fits the ones already taken, also under-represents a single that
+    conflicts with many others in the pool. `config["conflicts"]` counts, for each single in the pool, how many
+    others it can never be in a set with (the same position, or closer than `min_distance`).
 
     The same seed gives the same sets. Score columns are dropped, because a set's score is not a function of its
     singles'; score the sets with `score_variants`.
@@ -112,16 +147,42 @@ def propose_sets(
         )
     if by not in frame.columns:
         raise KeyError(f"no column {by!r} to rank on; present: {', '.join(sorted(frame.columns))}")
-    ranked = frame[frame[by].notna()].sort_values(by, ascending=False, kind="stable").head(pool)
+    max_per_set = dict(max_per_set or {})
+    skip = set(skip)
+    if max_per_set and regions is None:
+        raise ValueError("max_per_set needs regions: the labels the limits are counted over")
+    if skip and regions is None:
+        raise ValueError("skip needs regions: the labels it names")
+    if bias < 0:
+        raise ValueError(f"bias must not be negative, got {bias}")
+    if per_position is not None and per_position < 1:
+        raise ValueError(f"per_position must be at least 1 or None, got {per_position}")
+    regions = dict(regions or {})
+    with_score = frame[frame[by].notna()]
+    skipped = 0
+    if skip:
+        keep = [regions.get((str(c), int(p))) not in skip for c, p in zip(with_score["chain"], with_score["position"])]
+        skipped = len(keep) - sum(keep)
+        with_score = with_score[keep]
+    ordered = with_score.sort_values(by, ascending=False, kind="stable")
+    if per_position is not None:
+        ordered = ordered.groupby(["chain", "position"], sort=False).head(per_position)
+    ranked = ordered.head(pool)
     if len(ranked) < max(sizes):
         raise ValueError(
-            f"only {len(ranked)} singles have a {by!r} score, fewer than the {max(sizes)} a set of that size needs. "
-            f"Widen the singles, or lower the largest size."
+            f"only {len(ranked)} singles have a {by!r} score"
+            f"{f' and are outside skip={sorted(skip)}' if skip else ''}, fewer than the {max(sizes)} a set of that "
+            f"size needs. Widen the singles, or lower the largest size."
         )
-    limits = dict(limits or {})
-    if limits and regions is None:
-        raise ValueError("limits needs regions: the labels the limits are counted over")
-    regions = dict(regions or {})
+    positions_in_pool = len(set(zip(ranked["chain"], ranked["position"])))
+    if positions_in_pool < max(sizes):
+        warnings.warn(
+            f"the pool of {len(ranked)} singles sits on {positions_in_pool} positions, fewer than the {max(sizes)} "
+            f"a set of the largest size needs, and a set changes a position once, so those sizes cannot be drawn. "
+            f"Keep fewer substitutions per position (per_position=1), or widen the pool.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     target = Path(structure) if structure is not None else variants.structure
     singles = [
@@ -138,11 +199,16 @@ def propose_sets(
             distance = _distance(coords, singles[i], singles[j])
             ok = distance is not None and distance >= min_distance
             compatible[i, j] = compatible[j, i] = ok
+    conflicts = {singles[i][0]: int(n - 1 - compatible[i].sum()) for i in range(n)}
 
     rng = np.random.default_rng(seed)
     rows: list[dict] = []
     found: dict[int, int] = {}
     label_lookup = _imgt_lookup(ranked)
+    # `ranked` is best first, so index i has rank i + 1. A weighted order without replacement: each single gets the
+    # key u ** (rank ** bias) for a uniform u, and the largest keys come first. With bias 0 the keys are all u, which
+    # is a uniform order, so that case keeps the plain permutation and the sets it always drew.
+    exponents = np.arange(1, n + 1, dtype=float) ** bias
     for size in sizes:
         drawn: dict[str, list[int]] = {}
         attempts = 0
@@ -150,11 +216,12 @@ def propose_sets(
             attempts += 1
             chosen: list[int] = []
             in_label: Counter[str] = Counter()
-            for i in rng.permutation(n):
+            order = rng.permutation(n) if not bias else np.argsort(-(rng.random(n) ** exponents), kind="stable")
+            for i in order:
                 if not all(compatible[i, j] for j in chosen):
                     continue
                 label = labels[i]
-                if label in limits and in_label[label] >= limits[label]:
+                if label in max_per_set and in_label[label] >= max_per_set[label]:
                     continue
                 chosen.append(int(i))
                 if label is not None:
@@ -173,7 +240,7 @@ def propose_sets(
     if not rows:
         raise ValueError(
             f"no set of sizes {sizes} could be drawn from these {n} singles under min_distance={min_distance} "
-            f"and limits={limits}. Relax a limit, lower min_distance, or widen the singles."
+            f"and max_per_set={max_per_set}. Relax a limit, lower min_distance, or widen the singles."
         )
     out = Path(output_dir) if output_dir is not None else variants.output_dir / "sets"
     return write_table(
@@ -188,7 +255,13 @@ def propose_sets(
             "pool": n,
             "by": by,
             "min_distance": min_distance,
-            "limits": limits,
+            "max_per_set": max_per_set,
+            "skip": sorted(skip),
+            "skipped": skipped,
+            "per_position": per_position,
+            "positions_in_pool": positions_in_pool,
+            "bias": bias,
+            "conflicts": conflicts,
             "seed": seed,
             "from": str(variants.path),
             "distance_units": "angstrom" if target is not None else "residues",
@@ -205,32 +278,41 @@ def pick_designs(
     max_uses: int = 4,
     min_uses: int = 2,
     regions: Regions | None = None,
-    use_limits: Mapping[str, int] | None = None,
+    max_per_design: Mapping[str, int] | None = None,
     cdr_labels: Iterable[str] = (),
     quota: Mapping[int, int] | None = None,
-    max_pi_shift: float | None = 1.0,
+    max_pi_shift: float | tuple[float, float] | None = 1.0,
     sequences: Mapping[str, str] | None = None,
     pi_function: Callable[[str], float] | None = None,
     output_dir: Path | str | None = None,
 ) -> VariantTable:
-    """Choose `n` designs from scored sets, best first, under the rules that hold across designs.
+    """Choose `n` designs from scored sets, ranked within each size, under the rules that hold across designs.
 
-    Candidates are taken in order of `by`, highest first. Ties go to fewer substitutions in `cdr_labels`, then to
-    fewer substitutions overall, then to the id, so the same table always gives the same designs. A candidate is
-    kept when all of these hold:
+    Scores are not comparable across sizes (every extra substitution costs score, and the set is scored whole), so
+    the candidates are ranked within their size and the sizes are served in turn, not by one global order. Within
+    a size, candidates go in order of `by`, highest first; ties go to fewer substitutions in `cdr_labels`, then to
+    the id, so the same table always gives the same designs. The sizes then take turns, smallest first: each takes
+    its best candidate that passes the rules below, then the next size does, round after round, until `n` designs
+    are chosen or no size has a candidate left. All sizes draw on the same `max_per_design` and `max_uses` budget, so
+    the smallest size has first call on it in each round; the designs are numbered in the order they were chosen.
+    A candidate is kept when all of these hold:
 
     * it differs from every design already kept at `min_differences` positions or more, counting a position as
       different when the two designs put different residues there, the parent's included;
-    * none of its substitutions is already in `max_uses` designs, and one whose label is in `use_limits` is
-      in no more designs than that, for example `use_limits={"H3": 2}` for the plan's CDR-H3 rule;
+    * none of its substitutions is already in `max_uses` designs, and one whose label is in `max_per_design` is
+      in no more designs than that, for example `max_per_design={"H3": 2}` for the plan's CDR-H3 rule;
     * its size still has room in `quota`, a mapping from number of substitutions to designs. Without a quota the
-      best scores win outright, which favours the smallest sets, because every extra substitution costs score.
-      With one, a size not named gets no designs;
-    * its isoelectric point is within `max_pi_shift` of the parent's. The point is computed on the chains joined
+      sizes in the table share the designs equally, the smallest sizes taking the extra one when `n` does not
+      divide, and a size with nothing left gives its turn to the others. With one, each size gets at most its
+      entry, and a size named with 0 gets none. A size in the table that the quota leaves out gets none too, and a
+      warning names it and the candidates that cannot be chosen;
+    * its isoelectric point is within `max_pi_shift` of the parent's: a number for a symmetric bound, or
+      `(down, up)` to allow a larger fall than rise, or the reverse. The point is computed on the chains joined
       in name order, from `sequences` (chain to sequence) or else from the structure the table carries. For a Fab
-      structure that includes the constant domains and so understates the shift of an scFv; pass the scFv's own
-      chains in `sequences`. `pi_function` replaces the calculation; the default is Biopython's, imported when
-      first needed. Pass `max_pi_shift=None` to skip the rule.
+      structure that includes the constant domains, which an scFv does not have and which dilute the shift, so
+      a warning is raised when the structure is used; pass the scFv's own chains in `sequences`. `pi_function`
+      replaces the calculation; the default is Biopython's, imported when first needed. Pass
+      `max_pi_shift=None` to skip the rule.
 
     The plan also wants each substitution in at least `min_uses` designs. A greedy pass cannot guarantee a lower
     bound, so it is reported rather than enforced: `config["underused"]` lists the substitutions in fewer designs,
@@ -243,48 +325,77 @@ def pick_designs(
     if by not in frame.columns:
         raise KeyError(f"no column {by!r} to rank on; present: {', '.join(sorted(frame.columns))}")
     regions = dict(regions or {})
-    use_limits = dict(use_limits or {})
+    max_per_design = dict(max_per_design or {})
     cdr_labels = set(cdr_labels)
-    if use_limits and not regions:
-        raise ValueError("use_limits needs regions: the labels the limits are counted over")
+    if max_per_design and not regions:
+        raise ValueError("max_per_design needs regions: the labels the limits are counted over")
+    pi_bounds = _pi_bounds(max_pi_shift) if max_pi_shift is not None else None
 
     values = frame.groupby("variant_id", sort=False)[by].first()
-    candidates = []
+    by_candidate_size: dict[int, list] = {}
     for variant_id, score in values.items():
         if pd.isna(score):
             continue  # a candidate the scorer could not score cannot be ranked
         mutations = parse_id(str(variant_id))
         cdr_changes = sum(regions.get((m[0], m[1])) in cdr_labels for m in mutations)
-        candidates.append((-float(score), cdr_changes, len(mutations), str(variant_id), mutations))
-    candidates.sort(key=lambda c: c[:4])
-    unscored = len(values) - len(candidates)
+        by_candidate_size.setdefault(len(mutations), []).append((-float(score), cdr_changes, str(variant_id), mutations))
+    for group in by_candidate_size.values():
+        group.sort(key=lambda c: c[:3])
+    sizes = sorted(by_candidate_size)
+    scored_candidates = sum(len(group) for group in by_candidate_size.values())
+    unscored = len(values) - scored_candidates
+
+    if quota is not None:
+        left_out = [size for size in sizes if size not in quota]
+        if left_out:
+            ignored = sum(len(by_candidate_size[size]) for size in left_out)
+            warnings.warn(
+                f"quota names no slots for size {', '.join(map(str, left_out))}, so the {ignored} scored candidates of "
+                f"{'that size' if len(left_out) == 1 else 'those sizes'} cannot be chosen. Name a size with 0 to leave "
+                f"it out on purpose.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     shift_of: Callable[[Sequence[Mutation]], float] | None = None
-    if max_pi_shift is not None:
+    if pi_bounds is not None:
         shift_of = _pi_shift_function(scored, sequences, pi_function)
 
     chosen: list[tuple[str, Sequence[Mutation]]] = []
     uses: Counter[Mutation] = Counter()
     by_size: Counter[int] = Counter()
-    for _negative, _cdr, size, variant_id, mutations in candidates:
-        if len(chosen) >= n:
+    cursor = {size: 0 for size in sizes}  # a rule only ever gets stricter, so a rejected candidate stays rejected
+    while len(chosen) < n:
+        progressed = False
+        for size in sizes:
+            if len(chosen) >= n:
+                break
+            if quota is not None and by_size[size] >= quota.get(size, 0):
+                continue
+            group = by_candidate_size[size]
+            while cursor[size] < len(group):
+                _negative, _cdr, variant_id, mutations = group[cursor[size]]
+                cursor[size] += 1
+                if any(_hamming(mutations, other) < min_differences for _, other in chosen):
+                    continue
+                if any(
+                    uses[m] >= min(max_uses, max_per_design.get(regions.get((m[0], m[1])), max_uses)) for m in mutations
+                ):
+                    continue
+                if shift_of is not None and not -pi_bounds[0] <= shift_of(mutations) <= pi_bounds[1]:
+                    continue
+                chosen.append((variant_id, mutations))
+                by_size[size] += 1
+                uses.update(mutations)
+                progressed = True
+                break
+        if not progressed:
             break
-        if quota is not None and by_size[size] >= quota.get(size, 0):
-            continue
-        if any(_hamming(mutations, other) < min_differences for _, other in chosen):
-            continue
-        if any(uses[m] >= min(max_uses, use_limits.get(regions.get((m[0], m[1])), max_uses)) for m in mutations):
-            continue
-        if shift_of is not None and shift_of(mutations) >= max_pi_shift:
-            continue
-        chosen.append((variant_id, mutations))
-        by_size[size] += 1
-        uses.update(mutations)
 
     underused = sorted(m for m, count in uses.items() if count < min_uses)
     if len(chosen) < n:
         warnings.warn(
-            f"chose {len(chosen)} of {n} designs: the rules left no more candidates among {len(candidates)} scored. "
+            f"chose {len(chosen)} of {n} designs: the rules left no more candidates among {scored_candidates} scored. "
             f"Propose more sets, relax min_differences or max_uses, or widen the quota.",
             RuntimeWarning,
             stacklevel=2,
@@ -292,12 +403,14 @@ def pick_designs(
     if underused:
         warnings.warn(
             f"{len(underused)} substitutions are in fewer than {min_uses} designs (e.g. {make_id([underused[0]])}); "
-            f"see config['underused'].",
+            f"see config['underused']. The greedy draw under-represents a substitution that conflicts with many "
+            f"others in the pool, so look at config['conflicts'] of the table propose_sets wrote before widening "
+            f"the pool or lowering max_uses.",
             RuntimeWarning,
             stacklevel=2,
         )
     if not chosen:
-        raise ValueError(f"no design could be chosen from {len(candidates)} scored candidates ({unscored} unscored)")
+        raise ValueError(f"no design could be chosen from {scored_candidates} scored candidates ({unscored} unscored)")
 
     rank = {variant_id: i + 1 for i, (variant_id, _) in enumerate(chosen)}
     picked = frame[frame["variant_id"].isin(rank)].copy()
@@ -317,9 +430,10 @@ def pick_designs(
             "min_differences": min_differences,
             "max_uses": max_uses,
             "min_uses": min_uses,
-            "use_limits": use_limits,
+            "max_per_design": max_per_design,
             "quota": dict(quota) if quota is not None else None,
-            "max_pi_shift": max_pi_shift,
+            "by_size": dict(sorted(by_size.items())),
+            "max_pi_shift": list(pi_bounds) if pi_bounds is not None and isinstance(max_pi_shift, (tuple, list)) else max_pi_shift,
             "unscored": unscored,
             "underused": [make_id([m]) for m in underused],
             "uses": {make_id([m]): c for m, c in sorted(uses.items())},
@@ -351,10 +465,23 @@ def _hamming(left: Sequence[Mutation], right: Sequence[Mutation]) -> int:
     return sum(a.get(position) != b.get(position) for position in a.keys() | b.keys())
 
 
+def _pi_bounds(limit: float | tuple[float, float]) -> tuple[float, float]:
+    """(largest fall, largest rise) the isoelectric point may make, from a single number or a `(down, up)` pair."""
+    if isinstance(limit, (tuple, list)):
+        if len(limit) != 2:
+            raise ValueError(f"max_pi_shift takes a number or (down, up), got {limit!r}")
+        down, up = float(limit[0]), float(limit[1])
+    else:
+        down = up = float(limit)
+    if down < 0 or up < 0:
+        raise ValueError(f"max_pi_shift must not be negative, got {limit!r}")
+    return down, up
+
+
 def _pi_shift_function(
     scored: VariantTable, sequences: Mapping[str, str] | None, pi_function: Callable[[str], float] | None
 ) -> Callable[[Sequence[Mutation]], float]:
-    """A function from a candidate's mutations to the absolute shift of the isoelectric point from the parent's."""
+    """A function from a candidate's mutations to the signed shift of the isoelectric point from the parent's."""
     calculate = pi_function or _biopython_pi
     chains = dict(sequences) if sequences is not None else {}
     if not chains:
@@ -365,6 +492,14 @@ def _pi_shift_function(
             )
         wanted = sorted(set(scored.frame["chain"].astype(str)))
         chains = {chain: chain_sequence(scored.structure, chain) for chain in wanted}
+        lengths = ", ".join(f"{chain}: {len(sequence)} residues" for chain, sequence in chains.items())
+        warnings.warn(
+            f"the isoelectric point is computed on the whole chains of the structure ({lengths}). For a Fab that "
+            f"includes the constant domains, which an scFv does not have and which dilute the shift; pass the "
+            f"scFv's own chains as sequences={{chain: sequence}}.",
+            RuntimeWarning,
+            stacklevel=3,  # the caller of pick_designs
+        )
     order = sorted(chains)
     parent = calculate("".join(chains[c] for c in order))
 
@@ -374,7 +509,7 @@ def _pi_shift_function(
             if chain not in residues or not 0 < position <= len(residues[chain]) or residues[chain][position - 1] != wt:
                 raise ValueError(f"{make_id([(chain, position, wt, mut)])} does not match the sequence of chain {chain}")
             residues[chain][position - 1] = mut
-        return abs(calculate("".join("".join(residues[c]) for c in order)) - parent)
+        return calculate("".join("".join(residues[c]) for c in order)) - parent
 
     return shift
 

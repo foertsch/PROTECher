@@ -86,7 +86,7 @@ def test_a_set_never_changes_a_position_twice_and_the_ids_are_canonical(singles)
 def test_the_sets_are_drawn_from_the_best_singles_only(singles) -> None:
     ranked = singles.frame.sort_values("score_dummy_scorer", ascending=False, kind="stable").head(12)
     shortlist = set(ranked["variant_id"])
-    frame = propose_sets(singles, sizes=(5,), per_size=20, by="score_dummy_scorer", pool=12).frame
+    frame = propose_sets(singles, sizes=(5,), per_size=20, by="score_dummy_scorer", pool=12, per_position=None).frame
 
     used = {make_id([(r.chain, r.position, r.wt, r.mut)]) for r in frame.itertuples()}
     assert used <= shortlist
@@ -120,16 +120,95 @@ def test_a_distance_nothing_satisfies_is_an_error_that_says_what_to_relax(single
 def test_a_limit_caps_the_substitutions_a_set_takes_from_one_region(singles) -> None:
     regions = {("H", position): "H3" for position in range(1, 31)}
     frame = propose_sets(
-        singles, sizes=(5,), per_size=20, by="score_dummy_scorer", pool=60, regions=regions, limits={"H3": 2}
+        singles, sizes=(5,), per_size=20, by="score_dummy_scorer", pool=60, regions=regions, max_per_set={"H3": 2}
     ).frame
 
     in_region = frame[frame["position"] <= 30].groupby("variant_id").size()
     assert (in_region <= 2).all() and len(in_region) > 0
 
 
-def test_limits_without_regions_is_refused(singles) -> None:
-    with pytest.raises(ValueError, match="limits needs regions"):
-        propose_sets(singles, sizes=(5,), by="score_dummy_scorer", limits={"H3": 1})
+def test_max_per_set_without_regions_is_refused(singles) -> None:
+    with pytest.raises(ValueError, match="max_per_set needs regions"):
+        propose_sets(singles, sizes=(5,), by="score_dummy_scorer", max_per_set={"H3": 1})
+
+
+def test_skipped_regions_are_dropped_before_the_pool_is_cut(singles) -> None:
+    regions = {("H", position): "CH1" for position in range(1, 31)}
+    kept = singles.frame[singles.frame["position"] > 30]
+    shortlist = set(kept.sort_values("score_dummy_scorer", ascending=False, kind="stable").head(12)["variant_id"])
+
+    sets = propose_sets(
+        singles, sizes=(5,), per_size=15, by="score_dummy_scorer", pool=12, regions=regions, skip=("CH1",), per_position=None
+    )
+
+    used = {make_id([(r.chain, r.position, r.wt, r.mut)]) for r in sets.frame.itertuples()}
+    assert used <= shortlist  # the best 12 of what is left, not the best 12 overall minus the skipped ones
+    assert sets.config["skip"] == ["CH1"] and sets.config["skipped"] == int((singles.frame["position"] <= 30).sum())
+    assert sets.config["pool"] == 12
+
+
+def test_skip_without_regions_is_refused(singles) -> None:
+    with pytest.raises(ValueError, match="skip needs regions"):
+        propose_sets(singles, sizes=(5,), by="score_dummy_scorer", skip=("CH1",))
+
+
+def test_a_bias_makes_the_better_ranked_singles_recur_and_zero_is_the_uniform_draw(singles) -> None:
+    pool = 30
+    ranked = singles.frame.sort_values("score_dummy_scorer", ascending=False, kind="stable").head(pool)
+    best, worst = set(ranked["variant_id"].head(5)), set(ranked["variant_id"].tail(5))
+
+    def appearances(**kwargs) -> tuple[int, int]:
+        frame = propose_sets(
+            singles, sizes=(5,), per_size=40, by="score_dummy_scorer", pool=pool, seed=2, per_position=None, **kwargs
+        ).frame
+        ids = [make_id([(r.chain, r.position, r.wt, r.mut)]) for r in frame.itertuples()]
+        return sum(i in best for i in ids), sum(i in worst for i in ids)
+
+    biased_best, biased_worst = appearances(bias=3.0)
+
+    assert biased_best > 2 * biased_worst
+    assert appearances(bias=0.0) == appearances()  # the default is the uniform draw, as before
+    with pytest.raises(ValueError, match="bias must not be negative"):
+        propose_sets(singles, by="score_dummy_scorer", bias=-1.0)
+
+
+def test_per_position_keeps_the_best_substitutions_of_each_position_before_the_pool_is_cut(tmp_path) -> None:
+    # Position 2 holds the three best singles. A pool of 3 is those three, on one position, unless one per position is kept.
+    scored = table(
+        tmp_path,
+        {make_id([mutation(2)]): 10.0, make_id([mutation(2, "G")]): 9.0, make_id([mutation(2, "W")]): 8.0,
+         make_id([mutation(8)]): 7.0, make_id([mutation(14)]): 6.0, make_id([mutation(20)]): 5.0},
+    )
+
+    sets = propose_sets(scored, sizes=(2,), per_size=10, by="score_x", pool=3, min_distance=4.0, per_position=1)
+
+    used = {make_id([(r.chain, r.position, r.wt, r.mut)]) for r in sets.frame.itertuples()}
+    assert used == {make_id([mutation(2)]), make_id([mutation(8)]), make_id([mutation(14)])}
+    assert sets.config["per_position"] == 1 and sets.config["positions_in_pool"] == 3
+
+    with pytest.warns(RuntimeWarning, match="sits on 1 positions"), pytest.raises(ValueError, match="no set of sizes"):
+        propose_sets(scored, sizes=(2,), per_size=10, by="score_x", pool=3, min_distance=4.0, per_position=None)
+    with pytest.raises(ValueError, match="per_position must be at least 1"):
+        propose_sets(scored, sizes=(2,), by="score_x", per_position=0)
+
+
+def test_the_conflict_count_says_how_many_pool_members_each_single_can_never_join(tmp_path) -> None:
+    # No structure, so the distance is the residue gap: 1 and 2 are adjacent, 10 appears twice, 20 is alone.
+    scored = table(
+        tmp_path,
+        {make_id([mutation(1)]): 5.0, make_id([mutation(2)]): 4.0, make_id([mutation(10)]): 3.0,
+         make_id([mutation(10, "G")]): 2.0, make_id([mutation(20)]): 1.0},
+    )
+
+    sets = propose_sets(scored, sizes=(2,), per_size=5, by="score_x", pool=5, min_distance=4.0, per_position=None)
+
+    assert sets.config["conflicts"] == {
+        make_id([mutation(1)]): 1,  # position 2 is next to it
+        make_id([mutation(2)]): 1,
+        make_id([mutation(10)]): 1,  # the other change at position 10
+        make_id([mutation(10, "G")]): 1,
+        make_id([mutation(20)]): 0,
+    }
 
 
 def test_a_table_that_already_holds_pairs_is_refused(complex_, singles) -> None:
@@ -212,14 +291,14 @@ def test_a_use_limit_for_a_region_caps_its_substitutions_below_max_uses(tmp_path
     scored = table(tmp_path, {shared[0]: 10.0, shared[1]: 9.0, shared[2]: 8.0})
 
     with pytest.warns(RuntimeWarning, match="chose 2 of 15"):
-        designs = pick_designs(scored, by="score_x", n=15, regions=regions, use_limits={"H3": 2}, min_uses=1, max_pi_shift=None)
+        designs = pick_designs(scored, by="score_x", n=15, regions=regions, max_per_design={"H3": 2}, min_uses=1, max_pi_shift=None)
 
     assert ids_of(designs) == shared[:2]
 
 
-def test_use_limits_without_regions_is_refused(tmp_path) -> None:
-    with pytest.raises(ValueError, match="use_limits needs regions"):
-        pick_designs(table(tmp_path, {candidate(1, 2, 3, 4, 5): 1.0}), by="score_x", use_limits={"H3": 1})
+def test_max_per_design_without_regions_is_refused(tmp_path) -> None:
+    with pytest.raises(ValueError, match="max_per_design needs regions"):
+        pick_designs(table(tmp_path, {candidate(1, 2, 3, 4, 5): 1.0}), by="score_x", max_per_design={"H3": 1})
 
 
 def test_equal_scores_go_to_the_candidate_with_fewer_cdr_changes(tmp_path) -> None:
@@ -231,7 +310,7 @@ def test_equal_scores_go_to_the_candidate_with_fewer_cdr_changes(tmp_path) -> No
     assert ids_of(designs) == [outside, in_loop]
 
 
-def test_without_a_quota_the_smallest_sets_win_and_with_one_each_size_gets_its_share(tmp_path) -> None:
+def test_without_a_quota_the_sizes_share_the_designs_and_a_quota_sets_each_sizes_share(tmp_path) -> None:
     five_a, five_b = candidate(1, 2, 3, 4, 5), candidate(6, 7, 8, 9, 10)
     six_a, six_b = candidate(11, 12, 13, 14, 15, 16), candidate(1, 7, 13, 17, 18, 19)
     scored = table(tmp_path, {five_a: -10.0, five_b: -11.0, six_a: -20.0, six_b: -21.0})
@@ -239,11 +318,56 @@ def test_without_a_quota_the_smallest_sets_win_and_with_one_each_size_gets_its_s
     # Read each result before the next call: the table is the file on disk, and every call writes the same default path.
     plain = ids_of(pick_designs(scored, by="score_x", n=2, min_uses=1, max_pi_shift=None))
     shared = ids_of(pick_designs(scored, by="score_x", n=2, quota={5: 1, 6: 1}, min_uses=1, max_pi_shift=None))
-    sixes_only = ids_of(pick_designs(scored, by="score_x", n=2, quota={6: 2}, min_uses=1, max_pi_shift=None))
+    with pytest.warns(RuntimeWarning, match="quota names no slots for size 5"):
+        sixes_only = ids_of(pick_designs(scored, by="score_x", n=2, quota={6: 2}, min_uses=1, max_pi_shift=None))
+    fives_deliberately = ids_of(pick_designs(scored, by="score_x", n=2, quota={5: 2, 6: 0}, min_uses=1, max_pi_shift=None))
 
-    assert plain == [five_a, five_b]
+    assert plain == [five_a, six_a]  # one of each size, not the two best scores, which are both size 5
     assert shared == [five_a, six_a]
     assert sixes_only == [six_a, six_b]  # a size the quota does not name gets nothing
+    assert fives_deliberately == [five_a, five_b]  # a size named with 0 is left out on purpose, without a warning
+
+
+def test_a_size_whose_scores_are_all_worse_still_gets_its_designs(tmp_path) -> None:
+    fives = {candidate(*range(start, start + 5)): -1.0 - start for start in (1, 6, 11)}
+    eights = {candidate(*range(start, start + 8)): -50.0 - start for start in (1, 9)}
+    scored = table(tmp_path, {**fives, **eights})
+
+    designs = pick_designs(scored, by="score_x", n=4, min_uses=1, max_pi_shift=None)
+
+    sizes = designs.frame.drop_duplicates("variant_id")["n_mutations"].value_counts().to_dict()
+    assert sizes == {5: 2, 8: 2}  # a global ranking by score would have taken all three fives first
+
+
+def test_n_that_does_not_divide_by_the_sizes_gives_the_extra_design_to_the_smaller_sizes(tmp_path) -> None:
+    sets = {
+        candidate(1, 2, 3, 4, 5): -1.0,
+        candidate(6, 7, 8, 9, 10): -2.0,
+        candidate(11, 12, 13, 14, 15, 16): -3.0,
+        candidate(2, 4, 6, 8, 10, 12): -4.0,
+        candidate(13, 14, 15, 16, 17, 18, 19): -5.0,
+        candidate(1, 5, 9, 13, 17, 19, 20): -6.0,
+    }
+    scored = table(tmp_path, sets)
+
+    designs = pick_designs(scored, by="score_x", n=4, min_uses=1, max_pi_shift=None)
+
+    sizes = designs.frame.drop_duplicates("variant_id")["n_mutations"].value_counts().to_dict()
+    assert sizes == {5: 2, 6: 1, 7: 1}
+    assert {int(size): count for size, count in designs.config["by_size"].items()} == {5: 2, 6: 1, 7: 1}
+
+
+def test_a_size_with_nothing_left_gives_its_turn_to_the_others(tmp_path) -> None:
+    scored = table(
+        tmp_path,
+        {candidate(1, 2, 3, 4, 5): -1.0, candidate(6, 7, 8, 9, 10): -2.0, candidate(11, 12, 13, 14, 15): -3.0,
+         candidate(1, 3, 5, 7, 9, 11, 13, 15): -50.0},
+    )
+
+    designs = pick_designs(scored, by="score_x", n=4, min_uses=1, max_pi_shift=None)
+
+    sizes = designs.frame.drop_duplicates("variant_id")["n_mutations"].value_counts().to_dict()
+    assert sizes == {5: 3, 8: 1}  # the single size 8 is used up after one, and the fives fill the rest
 
 
 def test_candidates_the_scorer_could_not_score_are_skipped_and_counted(tmp_path) -> None:
@@ -300,6 +424,42 @@ def test_a_design_that_moves_the_isoelectric_point_too_far_is_not_chosen(tmp_pat
         )
 
     assert ids_of(designs) == [mild]  # a shift of 1 passes and a shift of 2 does not, although it scored better
+
+
+def test_the_bound_can_differ_for_a_fall_and_a_rise_of_the_isoelectric_point(tmp_path) -> None:
+    # Position 1 is A: A to K adds a positive charge, a rise of 1. Position 9 is K: K to A removes it, a fall of 1.
+    # Positions 2, 5, 6 and 7 are uncharged, so the shift is the one at position 1 or 9 alone.
+    rise = make_id([mutation(1, "K")] + [mutation(p) for p in (2, 5, 6, 7)])
+    fall = make_id([mutation(9, "A")] + [mutation(p) for p in (2, 5, 6, 7)])
+    scored = table(tmp_path, {rise: 10.0, fall: 9.0})
+    kwargs = dict(by="score_x", n=1, min_uses=1, sequences={"H": H_SEQ}, pi_function=charge)
+
+    fall_allowed = ids_of(pick_designs(scored, max_pi_shift=(1.5, 0.5), **kwargs))
+    rise_allowed = ids_of(pick_designs(scored, max_pi_shift=(0.5, 1.5), **kwargs))
+    symmetric = ids_of(pick_designs(scored, max_pi_shift=1.0, **kwargs))
+
+    assert fall_allowed == [fall]  # the better-scoring rise is +1, over its bound of 0.5
+    assert rise_allowed == [rise]
+    assert symmetric == [rise]  # a shift equal to the bound passes, so the better score wins
+
+
+def test_a_malformed_isoelectric_bound_is_refused(tmp_path) -> None:
+    scored = table(tmp_path, {candidate(1, 2, 3, 4, 5): 1.0})
+
+    with pytest.raises(ValueError, match=r"takes a number or \(down, up\)"):
+        pick_designs(scored, by="score_x", max_pi_shift=(1.0, 2.0, 3.0), pi_function=charge, sequences={"H": H_SEQ})
+    with pytest.raises(ValueError, match="must not be negative"):
+        pick_designs(scored, by="score_x", max_pi_shift=(-1.0, 1.0), pi_function=charge, sequences={"H": H_SEQ})
+
+
+def test_taking_the_sequences_from_the_structure_warns_that_a_fab_includes_its_constant_domains(complex_) -> None:
+    base = enumerate_variants(complex_, chain="H", mutations="AW")
+    sets = propose_sets(score_variants(complex_, base, models=["dummy_scorer"]), sizes=(5,), per_size=10,
+                        by="score_dummy_scorer", pool=30, seed=1)
+    scored = score_variants(complex_, sets, models=["dummy_scorer"])
+
+    with pytest.warns(RuntimeWarning, match=r"whole chains of the structure \(H: \d+ residues\).*constant domains"):
+        pick_designs(scored, by="score_dummy_scorer", n=2, min_uses=1, max_pi_shift=1000.0, pi_function=charge)
 
 
 def test_the_rule_can_be_skipped(tmp_path) -> None:
