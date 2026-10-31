@@ -253,3 +253,84 @@ def test_output_cannot_overwrite_input(tmp_path):
 def test_invalid_patch_tolerance_is_rejected(tol):
     with pytest.raises(ValueError):
         dev.screen({}, tol=tol)
+
+
+@pytest.mark.parametrize("contents", ["name,sequence\nv1,ACD\n", "v1,ACD,extra\n", "v1\n"])
+def test_headerless_csv_refuses_headers_and_wrong_column_counts(tmp_path, contents):
+    path = tmp_path / "input.csv"
+    path.write_text(contents)
+    with pytest.raises(ValueError):
+        dev.read_sequences(path, csv_no_header=True)
+
+
+def test_headerless_mode_cannot_be_used_for_fasta(tmp_path):
+    path = tmp_path / "input.fasta"
+    path.write_text(">v1\nACD\n")
+    with pytest.raises(ValueError, match=".csv"):
+        dev.read_sequences(path, csv_no_header=True)
+
+
+def test_default_csv_mode_does_not_silently_drop_first_candidate(tmp_path):
+    path = tmp_path / "input.csv"
+    path.write_text("v1,ACD\nv2,ACE\n")
+    with pytest.raises(ValueError):
+        dev.read_sequences(path)
+    assert dev.read_sequences(path, csv_no_header=True) == {"v1": "ACD", "v2": "ACE"}
+
+
+def test_duplicate_sequences_keep_both_ids_and_explain_redundant_runs():
+    seq = mutate({i: "A" for i in range(1, 6)})
+    rows = dev.screen({"first": seq, "second": seq, "unique": mutate({30: "S"})})
+    assert len(rows) == 4
+    for row, other in zip(rows[1:3], ("second", "first")):
+        assert row["rules_status"] == "pass"
+        assert "duplicate_sequence" in row["flags"]
+        assert row["duplicate_sequence_ids"] == other
+        assert "intentional controls or seed replicates" in row["review_notes"]
+    assert not rows[0]["duplicate_sequence_ids"]
+    assert "duplicate_sequence" not in rows[3]["flags"]
+
+
+@pytest.mark.parametrize("mutation,motif", [("S", "glyc:N28"), ("D", "isomer:DD@30")])
+def test_notes_identify_mutation_creating_new_motif(mutation, motif):
+    row = candidate(mutate({30: mutation}))
+    assert motif in row["liability_details"]
+    assert f"K30{mutation}" in row["liability_details"]
+    assert row["liability_details"] in row["review_notes"]
+
+
+def test_motif_details_include_each_changed_residue_in_the_motif():
+    seq = mutate({2: "N", 3: "A", 4: "S"})
+    row = candidate(seq)
+    assert "glyc:N2 overlaps substitutions V2N, Q3A, L4S" in row["liability_details"]
+
+
+@pytest.mark.parametrize("format", ["fasta", "csv_header", "csv_no_header"])
+def test_team_exporter_outputs_feed_screening_without_manual_edits(tmp_path, format):
+    from design_pipeline import scfv
+    spec = importlib.util.spec_from_file_location("track_a_export", SCRIPT.parents[1] / "examples/track_a_export.py")
+    export = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(export)
+    # Independent full-scFv positions, crossing both domains.
+    seq = mutate({30: "S", 66: "R", 97: "A", 159: "K", 202: "R"})
+    designs = export.build(scfv.layout_from_parent(dev.PARENT),
+                           ["B:K30S+B:G66R+B:S97A+A:R24K+A:S67R"])
+    assert designs[0].sequence == seq
+    path, out = tmp_path / ("input.fasta" if format == "fasta" else "input.csv"), tmp_path / "report.csv"
+    args = ["--input", str(path), "--out", str(out), "--sequence-only"]
+    if format == "fasta":
+        export.write_fasta(path, ("parent", dev.PARENT), designs)
+    else:
+        export.write_submission(path, designs, header=format == "csv_header")
+        if format == "csv_no_header":
+            args.append("--csv-no-header")
+    assert dev.main(args) == 0
+    with out.open() as fh:
+        rows = list(csv.DictReader(fh))
+    assert len(rows) == 2  # no duplicate reference from exporter's lowercase parent
+    assert rows[1]["design"] == designs[0].name
+    assert rows[1]["sequence"] == seq
+    assert rows[1]["rules_status"] == "pass"
+    assert rows[1]["n_mut"] == "5"
+    assert "R159K" in rows[1]["mutations"]
+    assert "new_glycosylation_motif" in rows[1]["flags"]

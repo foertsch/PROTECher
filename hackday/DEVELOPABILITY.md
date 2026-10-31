@@ -20,6 +20,10 @@ are resolved against that root, even when launching the script from elsewhere.
 # Sequence checks without reading structure or AntiFold files.
 .venv/bin/python hackday/05_developability.py --sequence-only
 
+# Directly consume track_a_export.py's default submission CSV (no header).
+.venv/bin/python hackday/05_developability.py \
+  --input submission/submission.csv --csv-no-header --sequence-only
+
 # Attach externally calculated ipSAE scores, without ranking or gating on them.
 .venv/bin/python hackday/05_developability.py \
   --input data/designs/new_candidates.csv \
@@ -29,11 +33,15 @@ are resolved against that root, even when launching the script from elsewhere.
 
 The legacy `--fasta` flag is an alias of `--input`. Input format is CSV for a
 `.csv` suffix and FASTA otherwise. CSV headers must include `name,sequence`.
+For the team's headerless submission CSV, explicitly add `--csv-no-header`;
+that mode requires exactly two columns and rejects a header. Header detection
+is deliberately not guessed, so the first candidate cannot silently disappear.
+The exporter's `scfv_for_folding.fasta` can also be read directly.
 FASTA headers are used in full as identifiers. Whitespace is removed from
 sequences and lowercase amino acids are normalized to uppercase. IDs must be
 unique and nonempty; preserve the same IDs across the team's tools.
 
-`PARENT`, `trastuzumab_scFv_parent` and `trastuzumab_scfv_parent` are reference
+`PARENT`, `parent`, `trastuzumab_scFv_parent` and `trastuzumab_scfv_parent` are reference
 aliases. If present, they must exactly match the official sequence. `--parent`
 changes the reference row's label, not the reference sequence. An unmodified
 sequence under any other name is treated as a candidate with zero substitutions.
@@ -128,12 +136,26 @@ list, rule checks, metric values, parent-relative deltas, flags and availability
 statuses. Empty numeric cells mean **unavailable**, not zero. All reference deltas
 are zero when the corresponding metric is available.
 
+`review_notes` explains the warnings in plain English. `liability_details` names
+the substitutions overlapping each newly introduced motif, using full-scFv
+numbering. For example, K30S creates `glyc:N28`, and K30D creates `isomer:DD@30`.
+These identify the local sequence change, not a confirmed chemical reaction.
+
+Identical candidate sequences under different IDs are retained and flagged as
+`duplicate_sequence`; `duplicate_sequence_ids` lists the matching IDs. This helps
+coordinate redundant GPU runs without removing intentional controls or seed
+replicates. It is not a biological failure or an additional competition rule.
+The automatically inserted reference is excluded from candidate duplicate checks.
+
 | Column | Interpretation |
 |---|---|
 | `input_status` | Valid sequence or invalid amino acids/empty sequence |
 | `rules_status` | `reference`, `pass`, `fail` or `review_required` |
 | `rule_issues` | Specific sequence-rule violations or unsupported length change |
 | `flags` | Potential biological risks and buried-mutation approximation warning |
+| `review_notes` | Plain-English explanation of rules, warnings and missing evidence |
+| `liability_details` | New motifs and the substitutions at their positions |
+| `duplicate_sequence_ids` | Other candidate IDs with the same normalized sequence |
 | `data_warnings` | Missing/unusable resources or skipped positional calculations |
 | `*_status` | Whether the corresponding metric was available and its method |
 | `assessment` | `reference`, `invalid_input`, `rule_violation`, `needs_review` or `no_warnings_detected` |
@@ -156,16 +178,35 @@ or out-of-range scores stop the import. Partial coverage is allowed; unscored
 designs have blank ipSAE cells. Use the report's reference label if supplying a
 parent score. This script does not compute ipSAE or aggregate seeds.
 
-We still need from the team:
+### Needed now, before GPU runs
 
-1. Final candidate sequences with stable IDs and a shortlist decision.
-2. ipSAE results plus the exact metric/aggregation convention, seeds, Boltz-2
-   settings and HER2 domain-IV sequence/boundaries used, so scores are comparable.
-3. Candidate structures and chain/residue mappings if candidate-specific
-   structural checks are wanted. That adapter is not implemented yet.
-4. Expression host/system, construct details (tags or additional sequences), and
-   relevant assay conditions before selecting a host-specific predictor.
-5. Experimental expression/stability results for calibration when available.
+The only required new input for initial screening is the candidate sequence list
+with stable, unique IDs. Provisional candidates are enough. The official parent
+and sequence constraints are already configured; no GPU, ipSAE or new structures
+are required. Please confirm whether the 15 local variants are the current team
+set, or provide the replacement list. Give untagged VH-linker-VL scFv sequences;
+describe tags/signal peptides separately rather than silently adding them.
+
+Helpful context, if known (not a blocker): which candidates are intended for the
+next GPU batch, the rationale for the mutations, and any intentional duplicate
+controls. Expression host/system, tags, secretion format, buffer/pH/temperature
+and the relevant assay endpoint help interpret warnings; unknown is acceptable.
+Existing rationale may already be in the team's research notes.
+
+### Later, after cofolding
+
+- Send ipSAE scores keyed to the same IDs **and exact sequences**, plus the
+  metric/aggregation convention, seeds, Boltz-2 settings and HER2 domain-IV
+  sequence/boundaries used. Include the parent control if it was run. These
+  results can be attached through `--ipsae`; they are not required for screening.
+- Provide candidate structures and chain/residue mappings if candidate-specific
+  structural checks are wanted. That adapter is not implemented yet.
+- If whole-candidate AntiFold scores already exist, retain their method and
+  antigen-inclusion metadata. They need a separate importer and must not replace
+  the additive proxy column silently or be mixed with it in one ranking. The
+  new ADAPT notebooks do not establish reliable affinity ranking for our designs.
+- Experimental expression/stability results can support later calibration;
+  they are not a prerequisite for the initial report.
 
 ## Verification and current local results
 
@@ -177,6 +218,9 @@ Checks cover parent identity, zero deltas, the published Biopython numerical
 example, rule boundaries, cysteine relocation, glycosylation, invalid inputs,
 length changes, missing/partial scores, reference mismatch, score joins and CLI
 outputs. They require no network or model inference.
+Integration tests feed the actual team exporter outputs (FASTA, CSV with a header
+and CSV without a header) into screening and check numbering across VH and VL.
+Regression checks also cover duplicate sequences and mutation-level explanations.
 
 The initial revised run on the 15 existing variants found all 15 compliant with
 the checked sequence rules; 11 had warnings and 4 had none under these heuristics.

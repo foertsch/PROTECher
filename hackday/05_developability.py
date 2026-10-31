@@ -14,6 +14,7 @@ import csv
 import hashlib
 import json
 import math
+from collections import defaultdict
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -29,7 +30,7 @@ PARENT = (
     "VTITCRASQDVNTAVAWYQQKPGKAPKLLIYSASFLYSGVPSRFSGSRSGTDFTLTISSLQPEDFATYYCQQHYTTP"
     "PTFGQGTKVEIK"
 )
-PARENT_NAMES = {"PARENT", "trastuzumab_scFv_parent", "trastuzumab_scfv_parent"}
+PARENT_NAMES = {"PARENT", "parent", "trastuzumab_scFv_parent", "trastuzumab_scfv_parent"}
 CONSERVED_CYS = (22, 96, 158, 223)  # 1-based full-scFv numbering
 AAS = "ACDEFGHIKLMNPQRSTVWY"
 DEFAULT_STRUCTURE = ROOT / "data/structures/1N8Z.pdb"
@@ -200,11 +201,22 @@ def fv_charge_symmetry(seq: str) -> float:
     return net_charge(vh) * net_charge(vl)
 
 
-def read_sequences(path: Path) -> dict[str, str]:
+def read_sequences(path: Path, *, csv_no_header: bool = False) -> dict[str, str]:
     """Accept FASTA or a CSV with name,sequence; never silently overwrite IDs."""
+    if csv_no_header and path.suffix.lower() != ".csv":
+        raise ValueError("--csv-no-header requires a .csv input")
     records: list[tuple[str, str]] = []
     with path.open(encoding="utf-8-sig", newline="") as fh:
-        if path.suffix.lower() == ".csv":
+        if csv_no_header:
+            for row in csv.reader(fh):
+                if not row or not any(cell.strip() for cell in row):
+                    continue
+                if len(row) != 2:
+                    raise ValueError("Headerless sequence CSV requires exactly two columns: name,sequence")
+                if [cell.strip().lower() for cell in row] == ["name", "sequence"]:
+                    raise ValueError("CSV has a header; omit --csv-no-header")
+                records.append((row[0].strip(), row[1]))
+        elif path.suffix.lower() == ".csv":
             reader = csv.DictReader(fh)
             if not {"name", "sequence"} <= set(reader.fieldnames or []):
                 raise ValueError("Sequence CSV requires name,sequence columns")
@@ -322,12 +334,72 @@ METRIC_COLUMNS = (
 )
 
 
+def liability_details(seq: str, new_motifs: list[str]) -> str:
+    """Explain which changed positions intersect each newly detected motif."""
+    details = []
+    for motif in new_motifs:
+        glyco = motif.startswith("glyc:")
+        start = int(motif.split(":N")[1] if glyco else motif.split("@")[1])
+        positions = range(start, start + (3 if glyco else 2))
+        changes = [f"{PARENT[i-1]}{i}{seq[i-1]}" for i in positions if PARENT[i-1] != seq[i-1]]
+        details.append(f"{motif} overlaps substitutions {', '.join(changes)} (full-scFv numbering)")
+    return " | ".join(details)
+
+
+def review_notes(row: dict) -> str:
+    """Readable explanations; keep biological flags separate from missing evidence."""
+    if row["input_status"] == "invalid":
+        return f"Sequence not evaluated: {row['input_errors']}."
+    if row["is_reference"]:
+        return "Official parent reference; the five-substitution rule does not apply."
+    notes = []
+    rules = {
+        "fewer_than_5_substitutions": "Fewer than five substitutions relative to the official parent.",
+        "linker_changed": "The protected linker sequence has changed.",
+        "conserved_cysteine_changed": "At least one protected cysteine has changed.",
+        "length_change_requires_alignment_and_rule_review":
+            "Length differs from the parent; positional checks require alignment and rule review.",
+    }
+    notes.extend(rules[issue] for issue in row["rule_issues"].split(";") if issue)
+    flags = set(row["flags"].split(";"))
+    if "new_liability" in flags:
+        notes.append("New sequence liability motif(s): " + row["liability_details"] + ".")
+    if "new_glycosylation_motif" in flags:
+        notes.append("Potential glycosylation motif; interpretation depends on the expression system.")
+    if "cys_changed" in flags:
+        notes.append("Cysteine positions changed; check disulfide connectivity.")
+    if "introduced_cysteine" in flags:
+        notes.append("Additional cysteine at full-scFv position(s): " + row["introduced_cysteines"] + ".")
+    if "pI_shift" in flags:
+        notes.append(f"Estimated pI shifts by {row['d_pI']:+.2f}; this is not an expression failure prediction.")
+    if "hydrophobic_run" in flags:
+        notes.append("The longest hydrophobic stretch is longer than in the parent.")
+    for flag, label in (("hydrophobic_patch", "hydrophobic"), ("positive_patch", "positive-charge"),
+                        ("negative_patch", "negative-charge")):
+        if flag in flags:
+            notes.append(f"The {label} patch heuristic exceeds the parent-relative tolerance.")
+    if "approx_buried" in flags:
+        notes.append("A mutation maps to a buried position; fixed-parent structural estimates need caution.")
+    if "duplicate_sequence" in flags:
+        notes.append("Identical sequence also appears as: " + row["duplicate_sequence_ids"] +
+                     ". Coordinate planned runs; duplicates may be intentional controls or seed replicates.")
+    if row["data_warnings"]:
+        notes.append("Some evidence was not evaluated; see data_warnings. Sequence checks remain usable before GPU runs.")
+    if not notes:
+        notes.append("No warnings from the implemented checks; not experimental validation.")
+    return " ".join(notes)
+
+
 def screen(sequences: dict[str, str], *, parent_name: str = "PARENT", surf=None,
            lp=None, tol: float = 1.0, ipsae=None, resource_warnings=()) -> list[dict]:
     """Keep every input row. Biological warnings do not silently discard candidates."""
     if not math.isfinite(tol) or tol < 0:
         raise ValueError("Patch tolerance must be finite and nonnegative")
     sequences = prepare_sequences(sequences, parent_name)
+    sequence_ids = defaultdict(list)
+    for name, seq in sequences.items():
+        if name != parent_name:
+            sequence_ids[seq].append(name)
     p_pi, p_q = pi_of(PARENT), net_charge(PARENT)
     p_gravy = sum(KD[a] for a in PARENT) / len(PARENT)
     p_run = longest_run(PARENT, "AVILMFWC")
@@ -350,17 +422,23 @@ def screen(sequences: dict[str, str], *, parent_name: str = "PARENT", surf=None,
         row.update(instability_status="unavailable", structure_status="unavailable",
                    antifold_status="unavailable", ipsae=(ipsae or {}).get(name),
                    ipsae_status="available" if name in (ipsae or {}) else "not_provided",
-                   new_motifs="", flags="", data_warnings="", assessment="")
+                   new_motifs="", liability_details="", duplicate_sequence_ids="",
+                   flags="", data_warnings="", assessment="", review_notes="")
         data_warnings = list(resource_warnings)
         invalid = sorted(set(seq) - set(AAS))
         if not seq or invalid:
             row.update(input_status="invalid", input_errors=("empty_sequence" if not seq
                        else "invalid_amino_acids:" + "".join(invalid)),
                        rules_status="not_evaluated", assessment="invalid_input")
+            row["review_notes"] = review_notes(row)
             rows.append(row)
             continue
 
         flags, issues = [], []
+        duplicates = [other for other in sequence_ids[seq] if other != name] if not reference else []
+        if duplicates:
+            flags.append("duplicate_sequence")
+            row["duplicate_sequence_ids"] = ";".join(duplicates)
         same_length = len(seq) == len(PARENT)
         muts = []
         if same_length:
@@ -383,6 +461,7 @@ def screen(sequences: dict[str, str], *, parent_name: str = "PARENT", surf=None,
                 flags.append("cys_changed")
             new = sorted(motifs(seq) - motifs(PARENT))
             row["new_motifs"] = ";".join(new)
+            row["liability_details"] = liability_details(seq, new)
             if new:
                 flags.append("new_liability")
             if any(m.startswith("glyc:") for m in new):
@@ -445,6 +524,7 @@ def screen(sequences: dict[str, str], *, parent_name: str = "PARENT", surf=None,
             else "needs_review" if flags or data_warnings or issues
             else "no_warnings_detected"
         )
+        row["review_notes"] = review_notes(row)
         rows.append(row)
     return rows
 
@@ -459,6 +539,8 @@ def file_info(path: Path | None) -> dict | None:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--input", "--fasta", dest="input", default="data/designs/variants.fasta")
+    ap.add_argument("--csv-no-header", action="store_true",
+                    help="input is a two-column name,sequence CSV without a header (exporter default)")
     ap.add_argument("--parent", default="PARENT", help="reference row label; sequence is fixed")
     ap.add_argument("--structure", default=str(DEFAULT_STRUCTURE), help="1N8Z numbering: B=VH, A=VL")
     ap.add_argument("--antifold", default=str(DEFAULT_ANTIFOLD), help="cached residue score CSV")
@@ -482,7 +564,7 @@ def main(argv=None) -> int:
     ):
         ap.error("Output and metadata paths must differ from each other and all inputs")
     try:
-        sequences = prepare_sequences(read_sequences(input_path), args.parent)
+        sequences = prepare_sequences(read_sequences(input_path, csv_no_header=args.csv_no_header), args.parent)
         ipsae = read_ipsae(ipsae_path, sequences) if ipsae_path else {}
     except (OSError, ValueError, TypeError, csv.Error) as exc:
         ap.error(str(exc))
@@ -505,7 +587,7 @@ def main(argv=None) -> int:
         except PackageNotFoundError:
             versions[package] = None
     metadata = {
-        "schema_version": 1, "created_utc": datetime.now(timezone.utc).isoformat(),
+        "schema_version": 2, "created_utc": datetime.now(timezone.utc).isoformat(),
         "parent_sequence": PARENT, "parent_sha256": sequence_hash(PARENT),
         "input": file_info(input_path), "script": file_info(Path(__file__)),
         "structure": file_info(structure_path), "antifold": file_info(af_path),
@@ -538,5 +620,3 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
