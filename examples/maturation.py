@@ -66,10 +66,15 @@ pairs = select_pairs(
 )
 print(f"\npairs:     {pairs.candidates}")
 
-# Step 6. Score the pairs. Same function, same table shape. The expensive
-# per-variant scorer is capped, because it builds a structure per candidate.
-expensive = ["dummy_scorer", "dummy_per_variant"] if dummy else ["antifold", "gearbind"]
-pair_scores = score_variants(complex_, pairs, models=expensive, max_variants=20)
+# Step 6. Score the pairs. Same function, same table shape. `antifold` is a
+# lookup and has no answer for two mutations, so the pairs go to `antifold_seq`,
+# which scores each as a whole mutant and needs the chain ids (1N8Z: heavy B,
+# light A). The per-variant scorer is capped, because it runs one pass per
+# candidate. GearBind is left out: it has no image here, and a flag one model
+# rejects fails the whole call, so it would need a call of its own.
+expensive = ["dummy_scorer", "dummy_per_variant"] if dummy else ["antifold_seq"]
+chains = {} if dummy else {"heavy": "B", "light": "A"}
+pair_scores = score_variants(complex_, pairs, models=expensive, max_variants=20, **chains)
 
 frame = pair_scores.frame.drop_duplicates("variant_id")
 print(f"\npairs by score_{expensive[0]}:")

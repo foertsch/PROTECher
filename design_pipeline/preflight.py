@@ -16,6 +16,7 @@ optional model is reported and does not fail the run.
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 import sys
 from typing import Iterable, Sequence
@@ -48,6 +49,12 @@ def rows(names: Iterable[str]) -> list[tuple[str, ...]]:
             # A route nobody has checked is not the same as a checked one, and
             # the table is the only place that distinction is visible.
             mark += " (route unchecked)"
+        # The tool resolves, but its command may still read a variable that is
+        # not set. Reported here, not counted against `resolved`: a keyword
+        # argument can stand in for it, so the run is where that is decided.
+        unset = [v for v in (route.needs_env if route else ()) if not os.environ.get(v, "").strip()]
+        if unset:
+            how += f" ({', '.join(unset)} not set)"
         out.append((name, step, env, mark, how))
     return out
 
