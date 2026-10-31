@@ -93,6 +93,61 @@ def test_the_functions_it_calls_take_the_arguments_it_passes() -> None:
             assert name in parameters, f"{function.__name__} has no {name}="
 
 
+def test_the_chain_cell_passes_only_flags_the_scorers_accept() -> None:
+    """The kwargs the notebook builds become command-line flags verbatim, so a
+    scorer whose CLI changes turns them into an argparse error on the GPU box.
+    This is the check that catches it here instead: the chain cell is run against
+    the committed 1N8Z and every flag it produces is looked up in the parser of
+    the script that scorer actually starts.
+    """
+    import re
+
+    repo = Path(__file__).resolve().parents[1]
+    pdb = repo / "data" / "structures" / "1N8Z.pdb"
+    if not pdb.is_file():
+        pytest.skip(f"{pdb} is not here; it is the only structure this needs")
+
+    from design_pipeline import Complex
+
+    from design_pipeline import structures
+
+    # 1N8Z: heavy B, light A, antigen C - design_pipeline.benchmark says so, and
+    # the cell under test is the one that works that out from the sequences.
+    sequences = {c: structures.chain_sequence(pdb, c) for c in ("A", "B", "C")}
+
+    cells = code_cells()
+    namespace: dict = {"display": lambda obj: None, "structures": structures}
+    exec(cells[0], namespace)  # the parameters cell, for ANTIFOLD_SRC
+    namespace.update(
+        {
+            "complex_": Complex(paths=(pdb,), output_dir=repo / "runs" / "unused"),
+            "antibody_records": [("VH", sequences["B"]), ("VL", sequences["A"])],
+            "antigen_name": "HER2",
+            "antigen": sequences["C"],
+            "SCAN_RECORD": 0,
+        }
+    )
+
+    exec(cells[4], namespace)  # the chain-roles cell
+    assert namespace["ab_chains"] == ["B", "A"]
+    assert namespace["antigen_chain"] == "C"
+
+    # Which script each scorer's flags are read by. `antifold` is the one that
+    # moved: its adapter runs antifold_score, not `python -m antifold.main`.
+    parsers = {
+        "antifold": repo / "antifold_score" / "scorer.py",
+        "antifold_seq": repo / "design_pipeline" / "adapters" / "_antifold_seq.py",
+    }
+    for model, script in parsers.items():
+        flags = set(re.findall(r'add_argument\(\s*"(--[A-Za-z0-9_]+)"', script.read_text()))
+        assert flags, f"no flags found in {script}"
+        for key in namespace["SCORER_KWARGS"].get(model, {}):
+            assert f"--{key}" in flags, (
+                f"the notebook passes {key}= to {model}, which starts {script.name}; "
+                f"that script takes {', '.join(sorted(flags))}"
+            )
+
+
 def test_the_helpers_it_borrows_still_exist() -> None:
     """The notebook loads examples/track_a_fold.py by path and reuses its
     sequence reading and antigen trimming rather than writing them again."""
