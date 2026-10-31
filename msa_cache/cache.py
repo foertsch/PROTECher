@@ -187,7 +187,8 @@ class MsaCache:
 
 def build_parent(cache: MsaCache, chains: Sequence[str], work_dir: Path | str, seed: int = 0):
     """Fold the parent once with the public server and keep its alignments. Needs a GPU, like any Boltz run."""
-    from design_pipeline import Design, predict_structure
+    from design_pipeline import Design
+    from design_pipeline.denovo import predict_structure
 
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)

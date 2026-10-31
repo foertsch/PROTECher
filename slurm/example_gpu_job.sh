@@ -20,7 +20,8 @@ import random
 import urllib.request
 from pathlib import Path
 
-from design_pipeline import Design, predict_structure
+from design_pipeline import Design
+from design_pipeline.denovo import predict_structure
 
 run_dir = Path(os.environ["RUN_DIR"])
 (run_dir / "sequences").mkdir(parents=True, exist_ok=True)
