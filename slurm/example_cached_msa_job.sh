@@ -21,7 +21,8 @@ import os
 import shutil
 from pathlib import Path
 
-from design_pipeline import Design, predict_structure
+from design_pipeline import Design
+from design_pipeline.denovo import predict_structure
 from design_pipeline.adapters._folding import fasta_chains
 from msa_cache import MsaCache, build_parent, use_cached_msas
 

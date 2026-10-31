@@ -201,7 +201,9 @@ class HuggingFaceMaskedLM:
         ids = encoded["input_ids"]
         # ESM prepends a cls token; locating it beats hardcoding the offset,
         # because the tokenizers of these two models do not agree about it.
-        offset = 1 if int(ids[0, 0]) == int(tokenizer.cls_token_id or -1) else 0
+        # Compare to None, not `or -1`: ESM's cls id is 0, which `or` skips.
+        cls_id = tokenizer.cls_token_id
+        offset = 1 if cls_id is not None and int(ids[0, 0]) == int(cls_id) else 0
         vocabulary = {
             residue: tokenizer.convert_tokens_to_ids(residue)
             for residue in AMINO_ACIDS

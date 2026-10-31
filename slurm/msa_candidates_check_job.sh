@@ -30,7 +30,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from design_pipeline import Design, predict_structure
+from design_pipeline import Design
+from design_pipeline.denovo import predict_structure
 from design_pipeline.adapters._folding import fasta_chains
 from design_pipeline.cache import read_manifest
 from design_pipeline.scoring import sc_rmsd
