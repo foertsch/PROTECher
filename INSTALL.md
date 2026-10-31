@@ -114,9 +114,10 @@ ERROR: ResolutionImpossible
 ```
 
 That is every published version of AntiFold. So it gets its own environment and
-is invoked by path. It is still in `DEFAULT_SCORERS`, which means a default
-`score_variants` call needs Env B configured — decide whether that is what you
-want before the event.
+is invoked by path. It is no longer in `DEFAULT_SCORERS` (2026-10-31, see
+[CHANGELOG.md](CHANGELOG.md)), so a default `score_variants` call does not need
+Env B at all; `models=["antifold"]` or `models=["antifold_seq"]` does, and the
+adapters and routes are unchanged.
 
 #### AntiFold 0.4.0 from GitHub, and `antifold_seq`
 
