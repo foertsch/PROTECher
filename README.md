@@ -54,6 +54,13 @@ Run it offline, with no GPU, no Docker and no network:
 python examples/maturation.py --dummy
 ```
 
+On the GPU box, starting from sequences rather than an accession, in a notebook:
+[notebooks/03_end_to_end.ipynb](notebooks/03_end_to_end.ipynb) takes the antibody
+and antigen FASTA, folds the parent over several seeds, runs the scan, the
+scorers, the gate and the pairs, refolds the designs as a structure veto and
+writes the K submission sequences. It has no fixture mode — it runs `preflight`
+on the adapters it is about to use and stops if one of them is missing.
+
 Three things about this that are deliberate:
 
 - **Scoring is a fan-out and a join, not a chain.** One structure feeds several
