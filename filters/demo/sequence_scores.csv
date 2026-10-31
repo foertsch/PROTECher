@@ -1,0 +1,6 @@
+design,sequence,score,protocol
+PARENT,ACDEFGHIKL,0,SYNTHETIC_sequence_v1
+toy_a,CCDEFGHIKL,3,SYNTHETIC_sequence_v1
+toy_b,ACEEFGHIKL,2,SYNTHETIC_sequence_v1
+toy_c,ACDEFGHIKM,1,SYNTHETIC_sequence_v1
+toy_d,ACDEYGHIKL,4,SYNTHETIC_sequence_v1

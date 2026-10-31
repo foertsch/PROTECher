@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "parent_id": "PARENT",
+  "require_developability": true,
+  "sources": [
+    {
+      "name": "toy_sequence",
+      "path": "sequence_scores.csv",
+      "id_column": "design",
+      "sequence_column": "sequence",
+      "protocol": "SYNTHETIC_sequence_v1",
+      "protocol_column": "protocol",
+      "metrics": [
+        {
+          "name": "score",
+          "column": "score",
+          "better": "higher",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "toy_structure",
+      "path": "structure_scores.csv",
+      "id_column": "design",
+      "sequence_column": "sequence",
+      "replicate_column": "seed",
+      "expected_replicates": 2,
+      "protocol": "SYNTHETIC_structure_v1",
+      "protocol_column": "protocol",
+      "metrics": [
+        {
+          "name": "ipsae",
+          "column": "ipsae",
+          "better": "higher",
+          "required": true
+        },
+        {
+          "name": "pae",
+          "column": "pae",
+          "better": "lower"
+        }
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "metric": "toy_structure.ipsae",
+      "operator": ">=",
+      "threshold": 0.7,
+      "action": "reject"
+    }
+  ],
+  "shortlist": {
+    "size": 2,
+    "sort_by": [
+      "toy_sequence.score",
+      "toy_structure.ipsae"
+    ],
+    "min_sequence_distance": 1,
+    "include_review": false
+  }
+}

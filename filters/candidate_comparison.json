@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "parent_id": "PARENT",
+  "require_developability": true,
+  "sources": [
+    {
+      "name": "ablang2",
+      "path": "../data/results/ablang2.csv",
+      "id_column": "variant_id",
+      "identity_file": "../data/results/ablang2_identity.csv",
+      "protocol": "SET_ACTUAL_CHECKPOINT_SEQUENCE_FORMAT_AND_SCORING_METHOD",
+      "metrics": [
+        {
+          "name": "score",
+          "column": "score",
+          "better": "higher",
+          "required": true
+        }
+      ]
+    },
+    {
+      "name": "consensus",
+      "path": "../data/results/consensus.csv",
+      "id_column": "variant_id",
+      "identity_file": "../data/results/consensus_identity.csv",
+      "protocol": "SET_ACTUAL_CONSENSUS_REFERENCE_AND_SCORING_METHOD",
+      "metrics": [
+        {
+          "name": "score",
+          "column": "score",
+          "better": "higher",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "gates": [],
+  "shortlist": null
+}

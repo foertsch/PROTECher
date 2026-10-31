@@ -1,0 +1,6 @@
+design,sequence,is_reference,input_status,rules_status,flags,rule_issues,data_warnings,review_notes
+PARENT,ACDEFGHIKL,True,valid,reference,,,,SYNTHETIC fixture; these are not real scFv rule results.
+toy_a,CCDEFGHIKL,False,valid,pass,,,,SYNTHETIC fixture; these are not real scFv rule results.
+toy_b,ACEEFGHIKL,False,valid,pass,example_warning,,,SYNTHETIC fixture; these are not real scFv rule results.
+toy_c,ACDEFGHIKM,False,valid,pass,,,,SYNTHETIC fixture; these are not real scFv rule results.
+toy_d,ACDEYGHIKL,False,valid,fail,,synthetic rule failure,,SYNTHETIC fixture; these are not real scFv rule results.
