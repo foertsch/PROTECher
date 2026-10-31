@@ -496,22 +496,36 @@ PER_VARIANT_SCORERS: tuple[str, ...] = (
     "foldx",
     "dummy_per_variant",
 )
-DEFAULT_SCORERS: tuple[str, ...] = ("antifold", "ablang2", "consensus")
+DEFAULT_SCORERS: tuple[str, ...] = ("ablang2", "consensus")
 """What `score_variants` runs when nothing is named.
 
-Three columns that disagree by construction - structure-based, sequence-based,
-frequency-based - and all three install into one environment:
+Two columns that disagree by construction - sequence-based and
+frequency-based - and both install into one environment:
 
-* `antifold`   inverse folding on the complex: the only one that has seen the
-               interface at all.
 * `ablang2`    a paired-antibody language model: the only one that knows what
                an antibody is allowed to look like at a framework position.
 * `consensus`  positional repertoire frequencies: no model, free, and
-               uncorrelated with both of the above.
+               uncorrelated with the above.
 
-`esm_if` is deliberately not here. It is a Python API with no command line,
-`torch-scatter` needs a compiler and `--no-build-isolation` to install, and
-published benchmarks put it below AntiFold on antibody affinity ranking - so
-the install cost buys a column we would trust less. The adapter and its route
-stay, for anyone who wants it.
+`antifold` was the third column until 2026-10-31 and is not here any more
+(`antifold_seq`, its per-variant counterpart, was never a default). Both
+adapters and both routes stay: naming either in `models=` runs it exactly as
+before, and the structure-based column is the one to put back first if a panel
+shows it ranking. What took it out of the defaults is that on the ADAPT ddG
+panel it does not rank. With HER2 in AntiFold's input - the condition closest
+to a binding campaign - the matrix lookup over the 11 singles correlates with
+ddG at Spearman +0.045 (R^2 of ddG on score 0.002), against +0.291 (R^2 0.066)
+on the Fab alone, and `antifold_seq` over the combinations, held at a fixed
+mutation count so that counting mutations cannot help, comes to +0.357 over the
+7 doubles (+0.179 without the antigen) and 0.000 over the 4 triples either way.
+Both runs are in `notebooks/03_adapt_calibration.ipynb` and
+`notebooks/03_adapt_calibration_antigen.ipynb`, and CHANGELOG.md reads them.
+A default that costs a second environment and a GPU has to earn more than
+that.
+
+`esm_if` is deliberately not here either. It is a Python API with no command
+line, `torch-scatter` needs a compiler and `--no-build-isolation` to install,
+and published benchmarks put it below AntiFold on antibody affinity ranking -
+so the install cost buys a column we would trust less. The adapter and its
+route stay, for anyone who wants it.
 """
