@@ -10,11 +10,14 @@ when their dependency is absent.
 
 from __future__ import annotations
 
+import contextlib
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Mapping, Sequence
 
+import numpy as np
 import pytest
 
 from design_pipeline import (
@@ -242,3 +245,96 @@ def test_logits_are_normalized_before_they_are_compared() -> None:
     assert _plm._logsumexp([]) == 0.0
     # Large values must not overflow.
     assert math.isfinite(_plm._logsumexp([1000.0, 1000.0]))
+
+
+# ESM's vocabulary, abridged. <cls> has id 0, which Python treats as falsy.
+ESM_IDS = {"<cls>": 0, "<pad>": 1, "<eos>": 2, "<mask>": 32} | {
+    residue: i for i, residue in enumerate("LAGVSERTIDPKQNFYMHWC", start=4)
+}
+
+
+class _Tensor:
+    """The few torch.Tensor operations HuggingFaceMaskedLM.log_probs uses, on numpy."""
+
+    def __init__(self, array) -> None:
+        self.array = np.asarray(array)
+
+    @property
+    def shape(self):
+        return self.array.shape
+
+    def __getitem__(self, key):
+        value = self.array[key]
+        return _Tensor(value) if isinstance(value, np.ndarray) else value
+
+    def __setitem__(self, key, value) -> None:
+        self.array[key] = value
+
+    def repeat(self, rows: int, columns: int) -> "_Tensor":
+        return _Tensor(np.tile(self.array, (rows, columns)))
+
+    def to(self, _device) -> "_Tensor":
+        return self
+
+    def float(self) -> "_Tensor":
+        return self
+
+
+def _fake_torch() -> SimpleNamespace:
+    def log_softmax(x: _Tensor, dim: int = -1) -> _Tensor:
+        shifted = x.array - x.array.max(axis=dim, keepdims=True)
+        return _Tensor(shifted - np.log(np.exp(shifted).sum(axis=dim, keepdims=True)))
+
+    return SimpleNamespace(no_grad=contextlib.nullcontext, log_softmax=log_softmax)
+
+
+def _fake_esm(sequence: str, *, with_cls: bool):
+    """A tokenizer and a perfect masked LM over `sequence`.
+
+    The model answers only at a masked index, with the residue that was really
+    there; everywhere else it is uniform. So a mask that lands on the wrong
+    index makes the model name the wrong residue.
+    """
+    original = [ESM_IDS[r] for r in sequence]
+    if with_cls:
+        original = [ESM_IDS["<cls>"], *original, ESM_IDS["<eos>"]]
+
+    class Tokenizer:
+        cls_token_id = ESM_IDS["<cls>"] if with_cls else None
+        mask_token_id = ESM_IDS["<mask>"]
+
+        def __call__(self, _sequence, return_tensors=None):
+            return {"input_ids": _Tensor([original])}
+
+        def convert_tokens_to_ids(self, token):
+            return ESM_IDS[token]
+
+    class Model:
+        device = "cpu"
+
+        def __call__(self, ids: _Tensor):
+            logits = np.zeros((*ids.shape, max(ESM_IDS.values()) + 1))
+            for row, index in zip(*np.nonzero(ids.array == ESM_IDS["<mask>"])):
+                logits[row, index, original[index]] = 10.0
+            return SimpleNamespace(logits=_Tensor(logits))
+
+    return _fake_torch(), Tokenizer(), Model()
+
+
+@pytest.mark.parametrize("with_cls", [True, False])
+def test_the_mask_lands_on_the_residue_it_scores(monkeypatch, with_cls: bool) -> None:
+    """ESM's <cls> token has id 0. `cls_token_id or -1` read that as "no cls
+    token", so the offset was 0 and every mask landed one residue early: each
+    row scored its neighbour, and the wild-type check could not see it because
+    it compares against the sequence, not against what the model was shown."""
+    sequence = "ACDEFGHIKLMNPQRSTVWY"  # no two neighbours alike
+    loaded = _fake_esm(sequence, with_cls=with_cls)
+    monkeypatch.setattr(_plm.HuggingFaceMaskedLM, "_load", lambda self: loaded)
+    backend = _plm.HuggingFaceMaskedLM("fake/esm")
+
+    found = backend.log_probs({"H": sequence}, "H", list(range(1, len(sequence) + 1)))
+
+    for position, residue in enumerate(sequence, start=1):
+        row = found[position]
+        scored = max(row, key=row.get)
+        assert scored == residue, f"position {position} scored {scored}, not {residue}"
