@@ -20,6 +20,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Standard complete Guruprasad instability-index implementation for hackday screening.
+developability = ["biopython>=1.84,<2"]
 # IMGT position labels. An extra rather than a core dependency because ANARCI
 # needs HMMER on PATH, which is awkward on a laptop and awkward in CI. Without
 # it the `imgt` column is empty and a warning says so; nothing else changes,
@@ -32,8 +34,7 @@ numbering = ["anarci"]
 # skipping it costs one column.
 plm = ["torch>=2.0", "transformers>=4.40", "ablang2", "antiberty"]
 # Structure comparison, for the ground-truth half of design_pipeline.metrics.
-# DockQ is wrapped rather than reimplemented, and it brings biopython itself,
-# which is why biopython is not named here: nothing in this package imports it.
+# DockQ is wrapped rather than reimplemented, and it brings biopython itself.
 # Imported lazily inside `dockq`, so the rest of the module - `interface_rmsd`,
 # `epitope_recall`, every diagnostic - still works on numpy and biotite alone.
 metrics = ["DockQ>=2.1"]
