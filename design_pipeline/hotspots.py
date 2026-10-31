@@ -1,7 +1,9 @@
 """FoldX alanine-scan hotspots of the trastuzumab scFv (1N8Z), as importable data.
 
 Source: docs/track_a_filtering.md, "Precomputed today": an alanine scan of the 1N8Z scFv with HER2 residues 480 to 607 in
-FoldX 5.1 (`examples/foldx_alanine_scan.py`). This module holds the numbers quoted there and nothing newer.
+FoldX 5.1 (`examples/foldx_alanine_scan.py`). This module holds the numbers quoted there and nothing newer. The per-position
+table is `trastuzumab_foldx_alanine_scan.csv` at the repo root: the raw 3-run scan of all 227 positions, with the values below
+added in the `ddg_bind_doc` and `runs_doc` columns. The 10-run re-runs behind some of them were not saved as a table.
 
 `ddg_bind` is the change in binding energy when the position is set to alanine, in kcal/mol; positive means the alanine
 weakens binding. `runs` is how many FoldX runs the value is a mean of; `None` where the doc does not say. A position is a
