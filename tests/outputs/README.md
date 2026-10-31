@@ -3,7 +3,7 @@
 AntiFold scores from the Adaptyv Track A work (improve the trastuzumab scFv against HER2, parent PDB 1N8Z).
 `tests/test_antifold_outputs.py` reads the files here and asserts the headline numbers, so the numbers in
 `docs/track_a_filtering.md` can be recomputed from the repo. The files are results copied from the cluster node; the test
-runs nothing. About 0.2 MB. No FoldX output is included (its licence does not allow sharing it).
+runs nothing. About 0.3 MB. No FoldX output is included (its licence does not allow sharing it).
 
 "(not checked)" marks a statement taken from an earlier session's note or a repo document and not verified here.
 
@@ -71,7 +71,7 @@ Trastuzumab variants scored on 1N8Z (heavy B, light A), date 2026-10-30.
   total, 1 to 13 per variant). The 4D5 file has 2,080 variants, 2,076 of them with light-chain mutations as well
   (7,503 heavy and 7,118 light substitutions; 3 to 9 per scored variant). The 1N8Z variants sit at heavy-chain
   positions 29 to 33, 52 to 55, 57 and 97 to 109, the 4D5 variants at heavy 100, 101, 102 and 106 and light 91 to 94 and
-  97 (positions 1-based into the 1N8Z chains). `docs/track_a_filtering.md` says the files hold no framework variants, so
+  97 (positions are the row number within the chain in `antifold_tables/1N8Z_BA.csv`, not that table's `pdb_pos` numbering). `docs/track_a_filtering.md` says the files hold no framework variants, so
   they calibrate AntiFold on loop positions only (not checked against a CDR definition).
 - **Ids:** `n8z_NNNN` and `d5_NNNN` are our ids: row NNNN (1-based, in file order) of the two AbBiBench files. The
   mutations are the positions where the AbBiBench heavy and light sequence differs from 1N8Z chains B (first 120
@@ -116,6 +116,45 @@ job; its output is not kept here.
 |---|---|---|---|
 | `skempi_1n8z_antifold_seq.csv` | KD, ddG and score for the eight rows | 8 | `id` (SKEMPI id); `label` (mutations, quoted because the last one contains commas); `kd_nM` (measured KD, nM); `ddg_exp_kcal_mol` (= RT ln(KD / 0.35 nM), RT 0.616 kcal/mol, two decimals, positive is weaker than the wild type); `score_antifold_seq` (nats, same definition as `score` above, range -5.9 to 3.8) |
 
+## antifold_tables/
+
+AntiFold's per-residue table for the trastuzumab parent 1N8Z: for every residue of the heavy (B) and light (A) chain, the
+log-probability AntiFold gives to each of the 20 amino acids given the backbone of the two chains (no antigen). Any single
+substitution can be read off it, which is the single scan of stage 3 in `docs/track_a_filtering.md`. It is also the table
+the `table` route above scores from.
+
+- **Run:** 2026-10-31 on node fgcz-r-023, the same AntiFold commit and weights as above, CPU, from the AntiFold source
+  folder with the GPUs hidden. This is the call `antifold_score.scorer.run_antifold` makes:
+
+```bash
+cd $AF/src
+CUDA_VISIBLE_DEVICES="" $AF/venv/bin/python antifold/main.py --pdb_file $AF/1N8Z.pdb --heavy_chain B --light_chain A --out_dir <out> --device cpu
+```
+
+- **File:** `1N8Z_BA.csv` is AntiFold's own file, unmodified (SHA-256
+  `4dae5dd4708b5334f02c30e263bf09f186a050605131af80500570308f0378f0`, 82,272 bytes). The same run on the node gave a
+  byte-identical file to the one left by the AbBiBench `table` route on 2026-10-30, checked on 2026-10-31. It has 434
+  rows, 220 for chain B and 214 for chain A: the whole Fab chains, so it includes the constant domains. The scFv's
+  variable domains are the first 120 heavy and the first 107 light rows (AntiFold's own region labels cover rows 1 to
+  120 of B and 1 to 108 of A). AntiFold renumbers the chains with ANARCII to IMGT before scoring (its log says so), and
+  the numbering in this table is that renumbering, despite the column name `pdb_pos`: the heavy variable domain ends at
+  128 and the light at 127, with the gaps IMGT leaves in the CDRs. The original PDB residue numbers were not compared.
+
+| Column | Meaning |
+|---|---|
+| `pdb_posins` | The residue number with insertion code; there are no insertion codes here, so it equals `pdb_pos` |
+| `pdb_chain` | `B` heavy, `A` light |
+| `pdb_res` | Wild-type residue, one letter |
+| `top_res` | The residue with the highest probability (checked: it is the largest of the 20 columns in every row). The wild type is the top residue in 301 of the 434 rows |
+| `pdb_pos` | The residue number, IMGT as renumbered by AntiFold (see above). **It drifts from the row number**: from row 10 of chain B and row 30 of chain A the numbering skips. The `position` used elsewhere in this folder (for example `A91H>F`) is the row number within the chain, not `pdb_pos` |
+| `perplexity` | exp of the entropy of the 20 probabilities (checked to 5e-4); 1 means AntiFold is certain, 20 would be uniform; here 1.0 to 14.6 |
+| `assumed_region` | AntiFold's region label (`FWH1`, `CDRH1` and so on); empty for the constant domains |
+| `A` to `Y` | Natural-log probability of that amino acid at that position (checked: the 20 values of every row sum to probability 1) |
+
+The log-likelihood ratio of a substitution at a row is the mutant's column minus the wild type's. It is not the same
+quantity as `score` in `abbibench_trastuzumab/scores_singles_table.csv`, which is AntiFold's global sampled score for the
+mutated sequence times the number of table rows.
+
 ## What cannot be recovered from these files
 
 - Which mutations each AbBiBench variant has. The candidate tables are not kept, and the ids depend on the row order of the
@@ -123,7 +162,7 @@ job; its output is not kept here.
 - The exact commands, since they read `cand_*.csv` files that are not kept. The route, structure, chains and flags are
   above.
 - The repo commit the node's `antifold_score` and `design_pipeline` were built from.
-- The SKEMPI job output, the per-residue AntiFold tables and the raw job logs.
+- The SKEMPI job output and the raw job logs.
 
 ## Not included
 
