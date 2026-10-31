@@ -110,6 +110,36 @@ is invoked by path. It is still in `DEFAULT_SCORERS`, which means a default
 `score_variants` call needs Env B configured — decide whether that is what you
 want before the event.
 
+#### AntiFold 0.4.0 from GitHub, and `antifold_seq`
+
+The PyPI releases are not the newest. The GitHub source, v0.4.0 (2026-09-27),
+needs Python 3.13 or later but does not pin biotite or numpy: its requirements
+are `biotite>=1.0`, `numpy>=1.26`, `torch>=2.3` and `pandas>=2.0`. On 2026-10-30
+it installed from a clone into a Python 3.13 environment next to biotite 2.0.0,
+numpy 2.5.4 and pandas 3.1.0, and ran on 1N8Z; `python -m
+design_pipeline.preflight` run inside that environment reported the default
+campaign resolved. So where Env A can be Python 3.13, AntiFold may not need an
+environment of its own. That is one environment on one machine, checked with
+the preflight and not through a full campaign.
+
+`antifold_seq` needs that version. It is the whole-sequence counterpart of
+`antifold`: AntiFold's own `score_sequence_in_complex`, one forward pass per
+mutated chain, so a candidate with several mutations is scored as a whole and
+not as a sum of singles. It disagrees with the matrix lookup on a single
+mutation (20 trastuzumab singles: correlation 0.81), so it is a separate
+column. It reads the same `DESIGN_PIPELINE_ANTIFOLD` and takes the chain ids as
+keyword arguments:
+
+```python
+score_variants(complex_, variants, models=["antifold_seq"], heavy="B", light="A",
+               weights="/path/to/antifold/models/model.pt")
+```
+
+The weights (567 MB) download on first use into AntiFold's own folder; pass
+`weights=` to reuse a download. It is a per-variant scorer, about 0.7 s a
+candidate on a CPU, so an uncapped table above `PER_VARIANT_LIMIT` is refused;
+cap it with `max_variants=`.
+
 #### ESM-IF, resolved empirically
 
 Two separate questions, two different answers. The pure-Python part resolves

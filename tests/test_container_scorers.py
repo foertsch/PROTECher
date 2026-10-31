@@ -7,6 +7,8 @@ normalized so `score` always means better binding.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -272,3 +274,60 @@ def test_every_scorer_and_check_declares_its_cost_class() -> None:
         assert getattr(REGISTRY[name], "per_variant") is False, name
     for name in PER_VARIANT_SCORERS:
         assert getattr(REGISTRY[name], "per_variant") is True, name
+
+
+def test_antifold_is_run_through_antifold_score_and_never_gets_a_bare_candidates_flag(
+    tmp_path, candidates, structure
+) -> None:
+    """AntiFold's own command line has no `--candidates`; the adapter used to
+    forward one and the run died with an argparse error."""
+    command = _scorers.antifold_process._command(
+        "af-python", [structure], tmp_path / "out", (), {"candidates": str(candidates)}
+    )
+
+    assert command[:2] == ["af-python", "-c"]
+    assert "antifold_score" in command[2]
+    assert "--candidates" not in command
+    assert command[command.index("--mutations_csv") + 1] == str(candidates)
+    assert command[command.index("--route") + 1] == "table"
+    assert command[command.index("--pdb") + 1] == str(structure.path)
+
+
+def test_antifold_scores_come_back_through_the_scorer_contract(
+    tmp_path, monkeypatch, candidates, structure
+) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    calls = fake_stream(
+        monkeypatch,
+        lambda n: (out / SCORES).write_text(
+            "variant_id,score,raw,note\nH:T30Y,0.2,0.1,\nH:S35A,,,2 mutations\n"
+        ),
+    )
+
+    produced = _scorers.antifold.run(
+        [structure], out, candidates=candidates, executable="af-python"
+    )
+    rows = produced[0].path.read_text().splitlines()
+
+    assert len(calls) == 1 and calls[0][0] == "af-python"
+    assert rows[1].split(",")[:2] == ["H:T30Y", "0.2"]
+    assert not any(line.startswith("H:S35A") and line.split(",")[1] for line in rows[1:])
+
+
+def test_the_antifold_score_command_is_found_from_any_working_directory(tmp_path) -> None:
+    """No PYTHONPATH and a working directory that is not the repo: the `-c`
+    bootstrap has to put the repo root on the path itself."""
+    import os
+
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    done = subprocess.run(
+        [sys.executable, "-c", _scorers._ANTIFOLD_SCORE, "--help"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert "--mutations_csv" in done.stdout

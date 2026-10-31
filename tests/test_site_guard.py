@@ -12,11 +12,16 @@ import site_guard
 
 @pytest.fixture
 def dockq(tmp_path, monkeypatch):
-    """A stand-in DockQ that writes whatever the test puts in the STUB_RESULT environment variable."""
+    """A stand-in DockQ that writes whatever the test puts in the STUB_RESULT environment variable.
+
+    If STUB_ARGV names a file, the model and native paths of each call are appended to it as one JSON line.
+    """
     stub = tmp_path / "DockQ"
     stub.write_text(
         f"#!{sys.executable}\n"
         "import json, os, sys\n"
+        "if os.environ.get('STUB_ARGV'):\n"
+        "    open(os.environ['STUB_ARGV'], 'a').write(json.dumps(sys.argv[1:3]) + chr(10))\n"
         "if os.environ.get('STUB_FAIL'):\n"
         "    sys.exit(3)\n"
         "out = sys.argv[sys.argv.index('--json') + 1]\n"
@@ -126,3 +131,75 @@ def test_the_default_dockq_path_comes_from_protecher_scratch_unless_dockq_is_set
         importlib.reload(site_guard)
         assert site_guard.DOCKQ == "/y/DockQ"
     importlib.reload(site_guard)
+
+
+def test_the_iptm_floor_is_a_parameter_and_the_reason_names_it(dockq, models):
+    dockq(0.80, 0.90)
+    assert not site_guard.check(*models, iptm=0.60)["passed"]
+    result = site_guard.check(*models, iptm=0.60, iptm_min=0.55)
+    assert result["passed"] and result["reasons"] == []
+    assert site_guard.check(*models, iptm=0.60, iptm_min=0.65)["reasons"] == ["ipTM 0.60 < 0.65"]
+
+
+def test_without_an_iptm_floor_no_confidence_file_is_read_and_the_pose_alone_decides(dockq, models):
+    """The model has no confidence file beside it here, so reading one would raise."""
+    dockq(0.80, 0.90)
+    result = site_guard.check(*models, iptm_min=None)
+    assert result["passed"] and result["iptm"] is None
+    dockq(0.01, 0.0)
+    assert not site_guard.check(*models, iptm_min=None)["passed"]
+
+
+def test_a_reference_the_other_model_agrees_with_is_confirmed(dockq, models):
+    model, reference = models
+    dockq(0.85, 0.90)
+    assert site_guard.confirm_reference(reference, model) == dict(confirmed=True, dockq_other=0.85, fnat_other=0.90, reasons=[])
+
+
+def test_a_reference_the_other_model_disagrees_with_is_not_confirmed_and_ipttm_plays_no_part(dockq, models):
+    model, reference = models
+    dockq(0.12, 0.20)
+    result = site_guard.confirm_reference(reference, model)
+    assert not result["confirmed"]
+    assert any("DockQ vs the other model's fold 0.12" in reason for reason in result["reasons"])
+    assert not any("ipTM" in reason for reason in result["reasons"])
+
+
+def test_the_reference_is_scored_as_the_model_against_the_other_models_fold(dockq, models, tmp_path, monkeypatch):
+    """DockQ is anchored on its second argument, so the roles cannot be swapped: with them swapped, one right pair scored 0.20."""
+    model, reference = models
+    log = tmp_path / "argv.log"
+    monkeypatch.setenv("STUB_ARGV", str(log))
+    dockq(0.85, 0.90)
+    site_guard.confirm_reference(reference, model)
+    assert json.loads(log.read_text().splitlines()[0]) == [str(reference), str(model)]
+
+
+def test_the_command_line_takes_an_iptm_floor(dockq, models, tmp_path):
+    model, reference = models
+    (tmp_path / "confidence_m_model_0.json").write_text(json.dumps({"iptm": 0.60}))
+    dockq(0.85, 0.90)
+    assert site_guard.main(["site_guard", str(reference), str(model)]) == 1
+    assert site_guard.main(["site_guard", "--iptm-min", "0.55", str(reference), str(model)]) == 0
+
+
+def test_the_command_line_stops_when_the_second_model_does_not_confirm_the_reference(dockq, models, tmp_path, capsys):
+    model, reference = models
+    other = tmp_path / "other.pdb"
+    other.write_text("END\n")
+    (tmp_path / "confidence_m_model_0.json").write_text(json.dumps({"iptm": 0.90}))
+    args = ["site_guard", "--confirm-with", str(other), str(reference), str(model)]
+    dockq(0.12, 0.20)
+    assert site_guard.main(args) == 1
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1 and lines[0].startswith("NOT CONFIRMED  ref.pdb vs other.pdb")  # nothing is gated against it
+    dockq(0.85, 0.90)
+    assert site_guard.main(args) == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert lines[0].startswith("CONFIRMED  ref.pdb vs other.pdb") and lines[1].startswith("PASS  m_model_0.pdb")
+
+
+@pytest.mark.parametrize("extra", [["--nope"], ["--iptm-min"], ["--iptm-min", "high"]])
+def test_a_bad_option_is_bad_usage(dockq, models, extra):
+    model, reference = models
+    assert site_guard.main(["site_guard", *extra, str(reference), str(model)]) == 2

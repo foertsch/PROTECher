@@ -6,7 +6,7 @@ import pytest
 
 from design_pipeline.cache import read_manifest
 from msa_cache import CacheError
-from msa_cache.remote import ORDER, localize_manifest, read_chains, run_staged, stage
+from msa_cache.remote import ORDER, localize_manifest, read_chains, run_staged, seed_spread, stage
 from test_msa_batch import designs, fake_boltz, sequence_design  # noqa: F401  (fixtures)
 from test_msa_cache import ANTIGEN, SCFV, boltz_msas, cache, mutate  # noqa: F401  (fixtures)
 
@@ -58,6 +58,33 @@ def test_run_staged_folds_in_the_staged_order_with_one_process(cache, design_dir
     assert [d.parent_id for d in folded] == ["v2", "wt", "v1"]
     assert len(fake_boltz.read_text().splitlines()) == 1 and "--seed 3" in fake_boltz.read_text()
     assert [d.parent_id for d in read_manifest(tmp_path / "run" / "out")] == ["v2", "wt", "v1"]
+
+
+def test_seeds_folded_side_by_side_each_get_their_own_output_folder(cache, design_dir, fake_boltz, tmp_path):
+    stage(design_dir, cache.dir, tmp_path / "run")
+    run_staged(tmp_path / "run", seed=0, out_name="out_s0")
+    run_staged(tmp_path / "run", seed=1, out_name="out_s1")
+    assert (tmp_path / "run" / "out_s0" / "DONE").is_file() and (tmp_path / "run" / "out_s1" / "DONE").is_file()
+    assert not (tmp_path / "run" / "out").exists()  # the default folder is only made when asked for
+    assert "--seed 0" in fake_boltz.read_text() and "--seed 1" in fake_boltz.read_text()
+
+
+def result(**iptm_by_design):
+    """One remote result, as `fold` returns it: a list of designs with their scores."""
+    return {"gpu": "L40S", "seconds": 1.0, "designs": [{"id": k, "scores": {"iptm": v, "plddt": 90.0}} for k, v in iptm_by_design.items()]}
+
+
+def test_seed_spread_is_the_mean_and_sample_sd_of_iptm_per_design():
+    rows = seed_spread([result(wt=0.9, v1=0.8), result(wt=0.92, v1=0.8), result(wt=0.94, v1=0.8)])
+    by_name = {name: (n, mean, sd) for name, n, mean, sd in rows}
+    assert [r[0] for r in rows] == ["wt", "v1"]  # first-seen order
+    assert by_name["wt"][0] == 3 and by_name["wt"][1] == pytest.approx(0.92) and by_name["wt"][2] == pytest.approx(0.02)
+    assert by_name["v1"][2] == pytest.approx(0.0)
+
+
+def test_seed_spread_has_no_sd_for_one_seed_and_skips_a_design_without_iptm():
+    rows = seed_spread([{"designs": [{"id": "a", "scores": {"iptm": 0.7}}, {"id": "b", "scores": {"plddt": 80.0}}]}])
+    assert rows == [("a", 1, 0.7, None)]
 
 
 def test_localize_manifest_rewrites_only_paths_under_the_remote_folder(tmp_path):
