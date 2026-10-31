@@ -50,7 +50,7 @@ Read from the eight detail pages on 2026-10-31. The reference field is PMID 1220
 Reading (ours, inference):
 
 - D102W is the only single gain, sits at the rim and is in CDR-H3, so it is a loop-arm candidate. It sits in the seven-mutation set, which is near wild type, so a gain here is not additive with the others.
-- Y105F is 4-fold weaker, in line with VH Y105 being one of the nine FoldX alanine hotspots (`docs/track_a_filtering.md`). VL N30 is also a FoldX hotspot, yet N30S is neutral. D102 is not a hotspot there.
+- Y105F is 4-fold weaker, in line with VH Y105 being one of the ten FoldX alanine hotspots (`docs/track_a_filtering.md`). VL N30 is also a FoldX hotspot, yet N30S is neutral. D102 is not a hotspot there.
 - The assay is not ours: wild type 0.35 nM by SPR at 310 K against our parent's 0.82 nM by BLI as an scFv. The assay format of these SKEMPI rows is not recorded in the fields read. Effect sizes may not transfer.
 - The Dudgeon 2012 stability pair (VH K30D, VL S52D) is not in SKEMPI. Its positions map directly: VH 30, and VL 52 is scFv 187. The effect is not rechecked here.
 
