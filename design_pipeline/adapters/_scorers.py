@@ -343,30 +343,47 @@ def matrix_container(
     )
 
 
-# AntiFold is the one scorer here whose command line we have checked, against
-# the CLI its own README documents: --pdb_file, --out_dir, the chain flags.
-# It takes no candidates CSV, because it writes per-residue log-likelihoods for
-# the whole chain in one pass - which is what makes it a matrix scorer.
-#
-# It cannot live in Env A. `pip install antifold` pins biotite==0.38, torch
-# ==2.3.1 and numpy==1.26.*, and this package needs biotite>=2.0; pip calls
+# AntiFold cannot live in Env A. `pip install antifold` pins biotite==0.38,
+# torch==2.3.1 and numpy==1.26.*, and this package needs biotite>=2.0; pip calls
 # that combination ResolutionImpossible. So it runs out of its own environment
 # and `executable=` (or DESIGN_PIPELINE_ANTIFOLD) is how you point at it.
+#
+# Its own command line (`python -m antifold.main --pdb_file --out_dir`) cannot
+# be called as a scorer. It takes no candidates CSV, so the `--candidates` this
+# adapter always forwards is an argparse error, and what it writes is a
+# per-residue matrix, not the `variant_id,score` table `read_tool_table` reads.
+# `antifold_score` (a module at the repo root, run inside the AntiFold
+# environment) closes both gaps: it takes the candidates CSV, calls AntiFold's
+# own functions and writes `scores.csv`. It is started through `-c` with the
+# repo root put on the path, so it is found whatever the working directory.
+#
+# Needs, besides DESIGN_PIPELINE_ANTIFOLD: ANTIFOLD_SRC, the AntiFold source
+# folder that holds models/model.pt.
+_ANTIFOLD_SCORE = (
+    "import runpy, sys; "
+    f"sys.path.insert(0, {str(Path(__file__).resolve().parents[2])!r}); "
+    "runpy.run_module('antifold_score', run_name='__main__', alter_sys=True)"
+)
+
+
 antifold_process = ProcessAdapter(
     tool="antifold",
     executable="python",
-    command=("-m", "antifold.main"),
+    command=("-c", _ANTIFOLD_SCORE),
     env_var="DESIGN_PIPELINE_ANTIFOLD",
-    input_template=("--pdb_file", "{path}"),
+    input_template=("--pdb", "{path}"),
     output_template=("--out_dir", "{path}"),
-    output_globs=("*.csv",),
+    fixed_args=("--route", "table"),
+    aliases={"candidates": "mutations_csv"},
+    path_kwargs=("candidates",),
+    output_globs=("scores.csv",),
 )
 
 
 # Matrix scorers. One forward pass over the complex, then a lookup per single
-# mutation; a multi-mutation candidate is re-run conditioned on the full mutant
-# sequence, which is the tool's business and the reason the candidates CSV
-# carries every mutation of every id.
+# mutation. The lookup is exact for a single only, so a candidate with several
+# mutations gets no score here (an empty cell and a note, never a sum); score
+# those with `antifold_seq`, which conditions on the whole mutant.
 antifold = ContainerScorer(
     name="antifold",
     tool=antifold_process,

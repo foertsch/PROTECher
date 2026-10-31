@@ -126,7 +126,11 @@ ROUTES: Mapping[str, Route] = {
         verified=True,
         module="antifold",
         env_var="DESIGN_PIPELINE_ANTIFOLD",
-        note="PyPI 0.3.1, BSD-3. Weights download on first run.",
+        note=(
+            "PyPI 0.3.1, BSD-3. Scored through the repo's antifold_score module, "
+            "which also needs ANTIFOLD_SRC: the AntiFold source folder that "
+            "holds models/model.pt."
+        ),
     ),
     # The whole-sequence counterpart of `antifold`, run from the same
     # environment, so it reads the same variable. It needs 0.4.0 or later, which

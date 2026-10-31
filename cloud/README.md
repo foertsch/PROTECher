@@ -3,9 +3,10 @@
 For the case that the cluster GPUs are busy. It folds a batch of scFv variants with Boltz-2 on a Modal GPU, using the
 cached alignments, and writes the same output folder as the cluster path (a `DONE` manifest, PDBs, scores).
 
-**Status.** Not run on Modal yet, because that needs your account. The staging and result-handling code is tested
-(`tests/test_msa_remote.py`, 172 tests pass on the cluster) and the script loads and registers its functions. The image
-build, the weights download and the GPU run are untested. The steps below find out tonight.
+**Status.** The smoke test has run on Modal (2026-10-31, L40S): five folds in 95 s, 106 s with start-up, against the
+existing `boltz-weights` volume with no new download. The ipTM values differ from the cluster's by 0.022 on average
+(0.012 without v2, whose cluster value was a single low draw) and pLDDT by at most 0.6. The staging and
+result-handling code is tested in `tests/test_msa_remote.py`. `fetch` and `--seeds` above 1 have not been run on Modal.
 
 ## Tonight
 
@@ -19,8 +20,9 @@ modal setup
 ```bash
 modal run cloud/modal_fold.py::prepare
 ```
-Builds the image (Boltz 2.2.1 and torch 2.15.0, the versions on the cluster) and downloads 7.6 GB of weights into the
-volume `protecher-boltz-weights`. CPU only. The first build takes several minutes.
+Builds the image (Boltz 2.2.1 and torch 2.15.0, the versions on the cluster) and downloads the 7.6 GB of weights into
+the volume `boltz-weights`, unless it already holds them (Track A's earlier script filled it under the same name, with
+the files at its root). CPU only. The first build takes several minutes.
 
 ```bash
 modal run cloud/modal_fold.py::smoke
@@ -77,7 +79,7 @@ You pay for GPU seconds while a fold runs. A third-party price list gives about 
 
 ```bash
 modal volume delete protecher-work
-modal volume delete protecher-boltz-weights
+modal volume delete boltz-weights
 ```
 
 ## Limits

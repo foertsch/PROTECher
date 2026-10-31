@@ -4,7 +4,7 @@ Same Boltz (2.2.1) and torch (2.15.0) as the FGCZ node, one process for the whol
 no alignment server. This is the one Modal script of the repository. Run everything from the repository root.
 cloud/README.md has the checklist.
 
-    modal run cloud/modal_fold.py::prepare                  # once: builds the image, downloads the weights (CPU only)
+    modal run cloud/modal_fold.py::prepare                  # once: builds the image, fills the weights volume if empty (CPU only)
     modal run cloud/modal_fold.py::smoke                    # once: five sequences, compared with the cluster's numbers
     modal run cloud/modal_fold.py::fold_dir --designs DIR --cache CACHE_DIR --out OUT [--seeds 1] [--order a,b,c]
     modal run cloud/modal_fold.py::fetch --fasta PARENT.fa --out CACHE_DIR   # alignments for a new antibody, CPU only
@@ -46,7 +46,7 @@ BOLTZ_VERSION = "2.2.1"  # the versions installed on the cluster GPU node, so re
 TORCH_VERSION = "2.15.0"
 
 app = modal.App("protecher-fold")
-weights = modal.Volume.from_name("protecher-boltz-weights", create_if_missing=True)
+weights = modal.Volume.from_name("boltz-weights", create_if_missing=True)  # the name Track A's earlier script already filled
 work = modal.Volume.from_name("protecher-work", create_if_missing=True)
 
 # Two environments, as on the cluster: Boltz needs numpy 1.x, the pipeline's biotite needs numpy 2.
@@ -73,16 +73,16 @@ CLUSTER_SEED0 = {  # run msa_batch_01 on the cluster GPU node: batch of five in 
 
 @app.function(image=image, volumes={"/cache": weights}, timeout=1800)
 def download_weights() -> str:
-    """Boltz-2's weights and molecule data into a volume, about 7.6 GB. CPU only."""
+    """Boltz-2's weights and molecule data into the volume's root, about 7.6 GB, skipping what is already there. CPU only."""
     import subprocess
 
     code = (
         "from pathlib import Path; from boltz.main import download_boltz2; "
-        "p = Path('/cache/boltz'); p.mkdir(parents=True, exist_ok=True); download_boltz2(p)"
+        "p = Path('/cache'); p.mkdir(parents=True, exist_ok=True); download_boltz2(p)"
     )
     subprocess.run(["/opt/boltz/bin/python", "-c", code], check=True)
     weights.commit()
-    return subprocess.run(["du", "-sh", "/cache/boltz"], capture_output=True, text=True, check=True).stdout.strip()
+    return subprocess.run(["du", "-sh", "/cache"], capture_output=True, text=True, check=True).stdout.strip()
 
 
 @app.function(image=image, gpu=GPU, cpu=4, memory=32768, volumes={"/cache": weights, "/work": work}, timeout=3600)
@@ -94,7 +94,7 @@ def fold(run_id: str, seed: int = 0) -> dict:
     import subprocess
 
     os.environ["PATH"] += ":/opt/boltz/bin"
-    os.environ["BOLTZ_CACHE"] = "/cache/boltz"
+    os.environ["BOLTZ_CACHE"] = "/cache"
     weights.reload()
     work.reload()
     from msa_cache.remote import run_staged
