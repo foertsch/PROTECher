@@ -1,29 +1,29 @@
-
-# PROTECher Track A - Stage 3 filtering configuration
+# PROTECher Track A: consensus configuration.
+# This file describes the intended model groups and their expected output
+# column names. It does NOT install or run models. Missing columns are reported
+# as INCOMPLETE by filter_variants.py; no dummy scores are substituted.
 
 [filter]
-# Normalized higher-is-better score.
-# For log-likelihood ratios, > 0 means likelihood ratio > 1.
+# PROTECher normalized scores are higher-is-better. For log-likelihood-ratio
+# outputs, score > 0 corresponds to a likelihood ratio > 1.
 positive_score_threshold = 0.0
-
-# Models with AUROC <= 0.5 are excluded from consensus.
 chance_auroc_cutoff = 0.5
-
-# Track A consensus requirements
 minimum_sequence_positive = 2
 minimum_inverse_positive = 2
 require_top_at_site = true
 
-
-# SIX SEQUENCE MODELS
-# ESM-1b + five ESM-1v models.
-# ESM-2 is listed separately below.
+# Sequence consensus: Hie rule = ESM-1b + five ESM-1v checkpoints.
+# The Track A plan also scores ESM-2, but ESM-2 is report-only, not a voter.
+# IMPORTANT: the current PROTECher registry has ESM-1v (one checkpoint), but
+# does not currently register ESM-1b or five separate ESM-1v checkpoints.
+# Those columns must be supplied by an external scorer/export if used.
 
 [[sequence_models]]
 name = "ESM-1b"
 score_column = "score_esm1b"
 site_rank_column = "rank_at_site_esm1b"
 auroc = "not_measured"
+repo_status = "not registered in current PROTECher scorer registry; external output required"
 enabled = true
 
 [[sequence_models]]
@@ -31,6 +31,7 @@ name = "ESM-1v-1"
 score_column = "score_esm1v"
 site_rank_column = "rank_at_site_esm1v"
 auroc = "not_measured"
+repo_status = "registered as esm1v; one checkpoint configured"
 enabled = true
 
 [[sequence_models]]
@@ -38,6 +39,7 @@ name = "ESM-1v-2"
 score_column = "score_esm1v_2"
 site_rank_column = "rank_at_site_esm1v_2"
 auroc = "not_measured"
+repo_status = "additional checkpoint not separately registered; external output required"
 enabled = true
 
 [[sequence_models]]
@@ -45,6 +47,7 @@ name = "ESM-1v-3"
 score_column = "score_esm1v_3"
 site_rank_column = "rank_at_site_esm1v_3"
 auroc = "not_measured"
+repo_status = "additional checkpoint not separately registered; external output required"
 enabled = true
 
 [[sequence_models]]
@@ -52,6 +55,7 @@ name = "ESM-1v-4"
 score_column = "score_esm1v_4"
 site_rank_column = "rank_at_site_esm1v_4"
 auroc = "not_measured"
+repo_status = "additional checkpoint not separately registered; external output required"
 enabled = true
 
 [[sequence_models]]
@@ -59,41 +63,71 @@ name = "ESM-1v-5"
 score_column = "score_esm1v_5"
 site_rank_column = "rank_at_site_esm1v_5"
 auroc = "not_measured"
+repo_status = "additional checkpoint not separately registered; external output required"
 enabled = true
 
-
-# FOUR INVERSE-FOLDING MODELS
+# Inverse-folding group from the Track A plan.
 
 [[inverse_folding_models]]
 name = "ESM-IF1"
 score_column = "score_esm_if"
 auroc = "not_measured"
+repo_status = "adapter name exists; current scorer adapter has no execution tool configured"
 enabled = true
 
 [[inverse_folding_models]]
 name = "ProteinMPNN-with-antigen"
 score_column = "score_proteinmpnn_score"
 auroc = "not_measured"
+repo_status = "score column is registered; scorer tool is not configured in current repo"
 enabled = true
 
 [[inverse_folding_models]]
 name = "SolubleMPNN-with-antigen"
 score_column = "score_solublempnn"
 auroc = "not_measured"
+repo_status = "no SolubleMPNN variant-scoring column is registered; external output required"
 enabled = true
 
 [[inverse_folding_models]]
 name = "AntiFold-antibody-only"
 score_column = "score_antifold"
-# Small, format-specific calibration result from the team's research.
+# Track A filtering note: improved-binder AUROC 0.85 on 22 scoreable binders
+# from the small substitution-only cetuximab calibration set. Treat as
+# provisional and format-specific, not as universal validation.
 auroc = 0.85
+repo_status = "registered; requires separate AntiFold environment and weights"
 enabled = true
 
-
-# ADDITIONAL MODEL - NOT PART OF THE SIX-VOTE CONSENSUS
+# Additional registered sequence scorers are reported but not counted in the
+# six-model Hie vote. Their outputs may be present in PROTECher score tables.
 
 [[report_only_models]]
-name = "ESM-2"
+name = "ESM-2 650M"
 score_column = "score_esm2_650m"
-auroc = "not_measured"
+repo_status = "registered in PROTECher"
+enabled = true
+
+[[report_only_models]]
+name = "AbLang2"
+score_column = "score_ablang2"
+repo_status = "registered in PROTECher"
+enabled = true
+
+[[report_only_models]]
+name = "AntiBERTy"
+score_column = "score_antiberty"
+repo_status = "registered in PROTECher; optional dependency"
+enabled = true
+
+[[report_only_models]]
+name = "OAS consensus prior"
+score_column = "score_consensus"
+repo_status = "registered in PROTECher; requires OAS frequency table; not an ML model"
+enabled = true
+
+[[report_only_models]]
+name = "AntiFold whole-sequence"
+score_column = "score_antifold_seq"
+repo_status = "registered in PROTECher; requires AntiFold 0.4+ environment"
 enabled = true
