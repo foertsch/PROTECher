@@ -86,7 +86,8 @@ one refuses a table of more than a couple of thousand rows.
 
 | `models=[...]` | Cost | What it is |
 |---|---|---|
-| `antifold` | matrix | antibody-specific inverse folding; the primary scorer |
+| `antifold` | matrix | antibody-specific inverse folding; out of the default set since 2026-10-31, see [CHANGELOG.md](CHANGELOG.md) |
+| `antifold_seq` | per variant | the same model over a whole mutated chain, so a combination is scored as one mutant |
 | `esm_if` | matrix | general inverse folding |
 | `abmpnn`, `proteinmpnn_score` | matrix | same shape, lower priority |
 | `consensus` | matrix | positional consensus from a cached OAS table; no model, no GPU |
@@ -94,6 +95,9 @@ one refuses a table of more than a couple of thousand rows.
 | `rosetta_ddg` | per variant | Rosetta Flex ddG; slow, errors uncorrelated with the learned models |
 | `foldx` | per variant | cheaper physics baseline, licence permitting |
 | `dummy_scorer`, `dummy_per_variant` | — | deterministic fixtures, offline |
+
+With no `models=`, `score_variants` runs `ablang2` and `consensus`
+(`DEFAULT_SCORERS`), neither of which needs a structure-model environment.
 
 `score_<model>` is normalized at the adapter boundary so higher always means
 better binding; `score_<model>_raw` keeps the tool's own number, so a

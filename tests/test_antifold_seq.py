@@ -349,7 +349,9 @@ def test_without_a_configured_environment_the_error_carries_the_route(tmp_path, 
 
 def test_it_is_registered_next_to_antifold_but_is_not_a_default_scorer():
     assert REGISTRY["antifold_seq"] is _scorers.antifold_seq and "antifold" in REGISTRY
-    assert "antifold_seq" not in _scorers.DEFAULT_SCORERS  # the default campaign is the matrix scorer's
+    # neither AntiFold scorer is a default any more (CHANGELOG.md, 2026-10-31); both stay registered
+    assert not {"antifold_seq", "antifold"} & set(_scorers.DEFAULT_SCORERS)
+    assert _scorers.DEFAULT_SCORERS == ("ablang2", "consensus")
 
 
 def test_it_is_per_variant_so_the_uncapped_table_guard_applies():
