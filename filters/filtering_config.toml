@@ -1,0 +1,99 @@
+
+# PROTECher Track A - Stage 3 filtering configuration
+
+[filter]
+# Normalized higher-is-better score.
+# For log-likelihood ratios, > 0 means likelihood ratio > 1.
+positive_score_threshold = 0.0
+
+# Models with AUROC <= 0.5 are excluded from consensus.
+chance_auroc_cutoff = 0.5
+
+# Track A consensus requirements
+minimum_sequence_positive = 2
+minimum_inverse_positive = 2
+require_top_at_site = true
+
+
+# SIX SEQUENCE MODELS
+# ESM-1b + five ESM-1v models.
+# ESM-2 is listed separately below.
+
+[[sequence_models]]
+name = "ESM-1b"
+score_column = "score_esm1b"
+site_rank_column = "rank_at_site_esm1b"
+auroc = "not_measured"
+enabled = true
+
+[[sequence_models]]
+name = "ESM-1v-1"
+score_column = "score_esm1v"
+site_rank_column = "rank_at_site_esm1v"
+auroc = "not_measured"
+enabled = true
+
+[[sequence_models]]
+name = "ESM-1v-2"
+score_column = "score_esm1v_2"
+site_rank_column = "rank_at_site_esm1v_2"
+auroc = "not_measured"
+enabled = true
+
+[[sequence_models]]
+name = "ESM-1v-3"
+score_column = "score_esm1v_3"
+site_rank_column = "rank_at_site_esm1v_3"
+auroc = "not_measured"
+enabled = true
+
+[[sequence_models]]
+name = "ESM-1v-4"
+score_column = "score_esm1v_4"
+site_rank_column = "rank_at_site_esm1v_4"
+auroc = "not_measured"
+enabled = true
+
+[[sequence_models]]
+name = "ESM-1v-5"
+score_column = "score_esm1v_5"
+site_rank_column = "rank_at_site_esm1v_5"
+auroc = "not_measured"
+enabled = true
+
+
+# FOUR INVERSE-FOLDING MODELS
+
+[[inverse_folding_models]]
+name = "ESM-IF1"
+score_column = "score_esm_if"
+auroc = "not_measured"
+enabled = true
+
+[[inverse_folding_models]]
+name = "ProteinMPNN-with-antigen"
+score_column = "score_proteinmpnn_score"
+auroc = "not_measured"
+enabled = true
+
+[[inverse_folding_models]]
+name = "SolubleMPNN-with-antigen"
+score_column = "score_solublempnn"
+auroc = "not_measured"
+enabled = true
+
+[[inverse_folding_models]]
+name = "AntiFold-antibody-only"
+score_column = "score_antifold"
+# Small, format-specific calibration result from the team's research.
+auroc = 0.85
+enabled = true
+
+
+# ADDITIONAL MODEL - NOT PART OF THE SIX-VOTE CONSENSUS
+
+[[report_only_models]]
+name = "ESM-2"
+score_column = "score_esm2_650m"
+auroc = "not_measured"
+enabled = true
