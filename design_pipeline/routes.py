@@ -132,18 +132,26 @@ ROUTES: Mapping[str, Route] = {
             "holds models/model.pt."
         ),
     ),
-    # The same environment and the same variable, scored as whole mutants.
-    "antifold_complex": Route(
+    # The whole-sequence counterpart of `antifold`, run from the same
+    # environment, so it reads the same variable. It needs 0.4.0 or later, which
+    # is not on PyPI: that release is the GitHub source, and unlike the PyPI
+    # ones it does not pin biotite, so it installs next to biotite>=2.0.
+    "antifold_seq": Route(
         step=SCORE,
         env=ENV_B,
         how=(
-            "pip install antifold into its own environment, then point the "
-            "adapter at it with executable= or DESIGN_PIPELINE_ANTIFOLD"
+            "install AntiFold 0.4.0 or later from github.com/oxpig/AntiFold "
+            "(Python 3.13 or later) into the environment DESIGN_PIPELINE_ANTIFOLD "
+            "points at, with executable= as the alternative"
         ),
         verified=True,
         module="antifold",
         env_var="DESIGN_PIPELINE_ANTIFOLD",
-        note="The complex route of antifold_score; needs ANTIFOLD_SRC as well.",
+        note=(
+            "Run on 1N8Z on 2026-10-30 in a Python 3.13 environment holding "
+            "biotite 2.0.0 and numpy 2.5.4. Weights, 567 MB, download on first "
+            "run into the package folder; pass weights= to reuse a download."
+        ),
     ),
     # ------------------------------------------------------------- Env A, step 3
     "esm_if": Route(

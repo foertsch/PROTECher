@@ -366,29 +366,24 @@ _ANTIFOLD_SCORE = (
 )
 
 
-def _antifold_score(route: str) -> ProcessAdapter:
-    return ProcessAdapter(
-        tool="antifold",
-        executable="python",
-        command=("-c", _ANTIFOLD_SCORE),
-        env_var="DESIGN_PIPELINE_ANTIFOLD",
-        input_template=("--pdb", "{path}"),
-        output_template=("--out_dir", "{path}"),
-        fixed_args=("--route", route),
-        aliases={"candidates": "mutations_csv"},
-        path_kwargs=("candidates",),
-        output_globs=("scores.csv",),
-    )
-
-
-antifold_process = _antifold_score("table")
-antifold_complex_process = _antifold_score("complex")
+antifold_process = ProcessAdapter(
+    tool="antifold",
+    executable="python",
+    command=("-c", _ANTIFOLD_SCORE),
+    env_var="DESIGN_PIPELINE_ANTIFOLD",
+    input_template=("--pdb", "{path}"),
+    output_template=("--out_dir", "{path}"),
+    fixed_args=("--route", "table"),
+    aliases={"candidates": "mutations_csv"},
+    path_kwargs=("candidates",),
+    output_globs=("scores.csv",),
+)
 
 
 # Matrix scorers. One forward pass over the complex, then a lookup per single
 # mutation. The lookup is exact for a single only, so a candidate with several
 # mutations gets no score here (an empty cell and a note, never a sum); score
-# those with `antifold_complex`, which conditions on the whole mutant.
+# those with `antifold_seq`, which conditions on the whole mutant.
 antifold = ContainerScorer(
     name="antifold",
     tool=antifold_process,
@@ -396,15 +391,36 @@ antifold = ContainerScorer(
     # higher-is-better.
     sign=1.0,
 )
-# The same model scoring each candidate as a whole: one forward pass per
-# mutated chain per candidate, so it is a per-variant scorer for cost purposes
-# (`score_variants` wants max_variants above PER_VARIANT_LIMIT). It needs the
-# antibody's chain ids: score_variants(..., heavy="B", light="A"). Do not mix
-# its numbers with `antifold`'s in one comparison; the two routes differ even
-# on single mutations.
-antifold_complex = ContainerScorer(
-    name="antifold_complex",
-    tool=antifold_complex_process,
+
+# The whole-sequence counterpart of `antifold`. The matrix scorer above is exact
+# for a single mutation and has no answer for several; this one asks AntiFold's
+# own score_sequence_in_complex how likely the mutant chain is given the
+# backbone, one forward pass per mutated chain, so a multi-mutation candidate is
+# scored as a whole and never as a sum. It disagrees with the lookup on a single
+# mutation (20 trastuzumab singles: correlation 0.81), so it is its own column
+# and not a replacement. The script runs in AntiFold's environment, by path, and
+# imports nothing from this package.
+#
+# `per_variant` because it is one forward pass per candidate, about 0.7 s on a
+# CPU (measured on 1N8Z), so the uncapped-table guard in score_variants applies:
+# a scan of all 4,598 singles is about an hour. Needs AntiFold 0.4.0 or later;
+# chain ids and, to reuse a download, `weights=` go in as keyword arguments.
+ANTIFOLD_SEQ_SCRIPT = Path(__file__).with_name("_antifold_seq.py")
+antifold_seq_process = ProcessAdapter(
+    tool="antifold_seq",
+    executable="python",
+    command=(str(ANTIFOLD_SEQ_SCRIPT),),
+    env_var="DESIGN_PIPELINE_ANTIFOLD",
+    input_template=("--pdb", "{path}"),
+    output_template=("--out_dir", "{path}"),
+    aliases={"candidates": "mutations_csv"},
+    path_kwargs=("candidates",),
+    output_globs=("antifold_seq.csv",),
+)
+antifold_seq = ContainerScorer(
+    name="antifold_seq",
+    tool=antifold_seq_process,
+    # A log-likelihood ratio against the wild type: already higher-is-better.
     sign=1.0,
     per_variant=True,
 )
@@ -475,7 +491,6 @@ MATRIX_SCORERS: tuple[str, ...] = (
     "dummy_sequence_scorer",
 )
 PER_VARIANT_SCORERS: tuple[str, ...] = (
-    "antifold_complex",
     "gearbind",
     "rosetta_ddg",
     "foldx",

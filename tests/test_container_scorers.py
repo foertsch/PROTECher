@@ -293,24 +293,6 @@ def test_antifold_is_run_through_antifold_score_and_never_gets_a_bare_candidates
     assert command[command.index("--pdb") + 1] == str(structure.path)
 
 
-def test_antifold_complex_is_the_same_command_on_the_other_route_and_costs_per_candidate(
-    tmp_path, candidates, structure
-) -> None:
-    command = _scorers.antifold_complex_process._command(
-        "af-python",
-        [structure],
-        tmp_path / "out",
-        (),
-        {"candidates": str(candidates), "heavy": "B", "light": "A"},
-    )
-
-    assert command[command.index("--route") + 1] == "complex"
-    assert command[command.index("--heavy") + 1] == "B"
-    assert command[command.index("--light") + 1] == "A"
-    assert _scorers.antifold_complex.per_variant is True
-    assert _scorers.antifold.per_variant is False
-
-
 def test_antifold_scores_come_back_through_the_scorer_contract(
     tmp_path, monkeypatch, candidates, structure
 ) -> None:
