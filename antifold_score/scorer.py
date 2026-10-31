@@ -218,24 +218,34 @@ def write_scores(path: Path, rows: Sequence[Row]) -> Path:
     return path
 
 
-def run_antifold(pdb: Path, heavy: str, light: str, out_dir: Path, src: Path, executable: str | None = None) -> Path:
+def run_antifold(
+    pdb: Path, heavy: str | None, light: str | None, out_dir: Path, src: Path, executable: str | None = None
+) -> Path:
     """AntiFold's own command line on one structure; returns the per-residue table it writes (the `table` route).
 
     Started from its source folder, where it keeps the weights, and with CUDA hidden: AntiFold 0.4.0 moves each
     batch to the GPU inside a forked data-loader worker whenever one is visible, which fails even with
     `--device cpu`. One structure takes seconds on a CPU.
+
+    Without chain ids AntiFold finds the heavy and the light chain itself (on 1N8Z it writes the same table as with
+    `--heavy_chain B --light_chain A`), and the table is the one csv it leaves in `out_dir`.
     """
+    if (heavy is None) != (light is None):
+        raise ScoreError("give both chain ids or neither")
     out_dir = Path(out_dir).resolve()
+    chains = ["--heavy_chain", heavy, "--light_chain", light] if heavy else []
     command = [
-        executable or sys.executable, "antifold/main.py",
-        "--pdb_file", str(Path(pdb).resolve()), "--heavy_chain", heavy, "--light_chain", light,
+        executable or sys.executable, "antifold/main.py", "--pdb_file", str(Path(pdb).resolve()), *chains,
         "--out_dir", str(out_dir), "--device", "cpu",
     ]
     done = subprocess.run(command, cwd=src, env={**os.environ, "CUDA_VISIBLE_DEVICES": ""}, capture_output=True, text=True)
-    table = out_dir / f"{Path(pdb).stem}_{heavy}{light}.csv"
-    if done.returncode != 0 or not table.is_file():
-        raise ScoreError(f"AntiFold failed (exit {done.returncode}); last output:\n" + "\n".join((done.stdout + done.stderr).splitlines()[-12:]))
-    return table
+    tables = [out_dir / f"{Path(pdb).stem}_{heavy}{light}.csv"] if heavy else sorted(out_dir.glob("*.csv"))
+    if done.returncode != 0 or len(tables) != 1 or not tables[0].is_file():
+        found = f"; tables found: {[t.name for t in tables]}" if done.returncode == 0 else ""
+        raise ScoreError(
+            f"AntiFold failed (exit {done.returncode}{found}); last output:\n" + "\n".join((done.stdout + done.stderr).splitlines()[-12:])
+        )
+    return tables[0]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -243,8 +253,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--pdb", type=Path, required=True)
     parser.add_argument("--out_dir", type=Path, required=True)
     parser.add_argument("--mutations_csv", type=Path, required=True, help="variant_id,chain,position,wt,mut, one row per mutation")
-    parser.add_argument("--heavy", help="heavy chain id in the structure (required unless --route table is given a --table)")
-    parser.add_argument("--light", help="light chain id in the structure (required unless --route table is given a --table)")
+    parser.add_argument("--heavy", help="heavy chain id in the structure (required by --route complex; --route table finds it itself)")
+    parser.add_argument("--light", help="light chain id in the structure (required by --route complex; --route table finds it itself)")
     parser.add_argument("--route", choices=["complex", "table"], default="complex", help="how to score; see the module docstring")
     parser.add_argument("--device", default="cpu", help="complex route only; with cpu the GPUs are hidden from AntiFold (default cpu)")
     parser.add_argument("--weights", type=Path, help="AntiFold weights; default <antifold_src>/models/model.pt, else the package's own path")
@@ -254,8 +264,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.route == "table":
         table_path = args.table
-        if table_path is None and not (args.heavy and args.light and args.antifold_src):
-            parser.error("--route table needs --table, or --heavy, --light and --antifold_src (or ANTIFOLD_SRC)")
+        if table_path is None and not args.antifold_src:
+            parser.error("--route table needs --table, or --antifold_src (or ANTIFOLD_SRC)")
+        if bool(args.heavy) != bool(args.light):
+            parser.error("--heavy and --light go together")
         candidates = read_candidates(args.mutations_csv)
         if table_path is None:
             table_path = run_antifold(args.pdb, args.heavy, args.light, args.out_dir / "antifold", Path(args.antifold_src))

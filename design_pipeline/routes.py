@@ -126,7 +126,24 @@ ROUTES: Mapping[str, Route] = {
         verified=True,
         module="antifold",
         env_var="DESIGN_PIPELINE_ANTIFOLD",
-        note="PyPI 0.3.1, BSD-3. Weights download on first run.",
+        note=(
+            "PyPI 0.3.1, BSD-3. Scored through the repo's antifold_score module, "
+            "which also needs ANTIFOLD_SRC: the AntiFold source folder that "
+            "holds models/model.pt."
+        ),
+    ),
+    # The same environment and the same variable, scored as whole mutants.
+    "antifold_complex": Route(
+        step=SCORE,
+        env=ENV_B,
+        how=(
+            "pip install antifold into its own environment, then point the "
+            "adapter at it with executable= or DESIGN_PIPELINE_ANTIFOLD"
+        ),
+        verified=True,
+        module="antifold",
+        env_var="DESIGN_PIPELINE_ANTIFOLD",
+        note="The complex route of antifold_score; needs ANTIFOLD_SRC as well.",
     ),
     # ------------------------------------------------------------- Env A, step 3
     "esm_if": Route(

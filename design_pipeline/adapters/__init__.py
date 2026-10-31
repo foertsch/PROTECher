@@ -28,6 +28,7 @@ from ._rfdiffusion import rfdiffusion
 from ._scorers import (
     abmpnn,
     antifold,
+    antifold_complex,
     consensus,
     dummy_per_variant,
     dummy_scorer,
@@ -73,6 +74,7 @@ __all__ = [
     "esm1v",
     "esm2_650m",
     "antiberty",
+    "antifold_complex",
     "gearbind",
     "rosetta_ddg",
     "foldx",

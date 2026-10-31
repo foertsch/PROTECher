@@ -64,6 +64,7 @@ REGISTRY: dict[str, ModelAdapter] = {
     "esm1v": adapters.esm1v,
     "esm2_650m": adapters.esm2_650m,
     "antiberty": adapters.antiberty,
+    "antifold_complex": adapters.antifold_complex,
     "gearbind": adapters.gearbind,
     "rosetta_ddg": adapters.rosetta_ddg,
     "foldx": adapters.foldx,

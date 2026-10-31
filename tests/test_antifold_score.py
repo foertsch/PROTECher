@@ -311,10 +311,18 @@ def test_main_complex_route_needs_both_chains_and_refuses_a_table(tmp_path, extr
         main(["--pdb", "x.pdb", "--out_dir", str(tmp_path), "--mutations_csv", str(tmp_path / "c.csv"), *extra])
 
 
-def test_main_table_route_needs_chains_and_the_antifold_folder_unless_a_table_is_given(tmp_path):
+def test_main_table_route_needs_the_antifold_folder_unless_a_table_is_given(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTIFOLD_SRC", raising=False)
     (tmp_path / "c.csv").write_text("variant_id,chain,position,wt,mut\n")
     with pytest.raises(SystemExit):
         main(["--pdb", "x.pdb", "--out_dir", str(tmp_path), "--mutations_csv", str(tmp_path / "c.csv"), "--route", "table"])
+
+
+def test_main_table_route_takes_both_chain_ids_or_neither(tmp_path):
+    (tmp_path / "c.csv").write_text("variant_id,chain,position,wt,mut\n")
+    with pytest.raises(SystemExit):
+        main(["--pdb", "x.pdb", "--out_dir", str(tmp_path), "--mutations_csv", str(tmp_path / "c.csv"), "--route", "table",
+              "--antifold_src", str(tmp_path), "--heavy", "B"])
 
 
 def test_run_antifold_starts_it_in_its_source_folder_with_cuda_hidden(table, tmp_path, monkeypatch):
@@ -344,3 +352,38 @@ def test_a_failing_antifold_run_reports_its_last_output(tmp_path):
     (src / "antifold" / "main.py").write_text("import sys; print('boom: no weights'); sys.exit(3)\n")
     with pytest.raises(ScoreError, match=r"(?s)exit 3.*boom: no weights"):
         run_antifold("x.pdb", "B", "A", tmp_path / "out", src, executable=sys.executable)
+
+
+def fake_antifold_main(src: Path, tables: tuple[str, ...]) -> None:
+    """An AntiFold main.py that writes the named csv files and the command line it was given."""
+    (src / "antifold").mkdir(parents=True)
+    (src / "antifold" / "main.py").write_text(textwrap.dedent(f"""
+        import os, sys
+        out = sys.argv[sys.argv.index("--out_dir") + 1]
+        os.makedirs(out, exist_ok=True)
+        for name in {tables!r}:
+            open(os.path.join(out, name), "w").write("pdb_chain,pdb_res\\n")
+        open(os.path.join(out, "argv.txt"), "w").write(" ".join(sys.argv[1:]))
+    """))
+
+
+def test_run_antifold_without_chain_ids_leaves_them_to_antifold_and_takes_the_one_table(tmp_path):
+    src = tmp_path / "src"
+    fake_antifold_main(src, ("1N8Z_BA.csv",))
+    result = run_antifold("1N8Z.pdb", None, None, tmp_path / "out", src, executable=sys.executable)
+    assert result == (tmp_path / "out").resolve() / "1N8Z_BA.csv"
+    argv = (tmp_path / "out" / "argv.txt").read_text()
+    assert "--heavy_chain" not in argv and "--light_chain" not in argv
+    assert "--pdb_file" in argv and "--device cpu" in argv
+
+
+def test_run_antifold_without_chain_ids_refuses_two_tables_rather_than_pick_one(tmp_path):
+    src = tmp_path / "src"
+    fake_antifold_main(src, ("1N8Z_BA.csv", "1N8Z_HL.csv"))
+    with pytest.raises(ScoreError, match="tables found"):
+        run_antifold("1N8Z.pdb", None, None, tmp_path / "out", src, executable=sys.executable)
+
+
+def test_run_antifold_takes_both_chain_ids_or_neither(tmp_path):
+    with pytest.raises(ScoreError, match="both chain ids or neither"):
+        run_antifold("x.pdb", "B", None, tmp_path / "out", tmp_path, executable=sys.executable)
