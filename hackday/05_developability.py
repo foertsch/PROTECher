@@ -536,6 +536,60 @@ def file_info(path: Path | None) -> dict | None:
             if path.is_file() else None}
 
 
+def attach_physics(rows: list[dict], path: Path) -> None:
+    """Attach the companion CPU report using exact IDs AND sequence identity.
+
+    Parent observations never populate a candidate's row. Missing structures and
+    incomplete checks are explicit; neither changes a sequence-rule verdict.
+    """
+    from design_pipeline.physics import METRICS
+    by_name = {row["design"]: row for row in rows}
+    with path.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        required = {"design", "sequence", "sequence_sha256", "physics_status", "physics_scope",
+                    "physics_flags", "physics_missing_checks", "physics_error", *METRICS}
+        if not required <= set(reader.fieldnames or []):
+            raise ValueError("Physics CSV must be produced by 06_physics_screen.py")
+        imported = {}
+        allowed_statuses = {"not_evaluated_no_structure", "invalid_structure", "review_required",
+                            "partial", "no_geometry_warnings"}
+        for record in reader:
+            name = record["design"]
+            if name in PARENT_NAMES and name not in by_name:
+                name = next(row["design"] for row in rows if row["is_reference"])
+            if name not in by_name or name in imported:
+                raise ValueError(f"Unknown or duplicate physics ID: {name}")
+            if record["sequence"] != by_name[name]["sequence"] or record["sequence_sha256"] != sequence_hash(record["sequence"]):
+                raise ValueError(f"Physics sequence/hash mismatch for {name}")
+            if record["physics_status"] not in allowed_statuses:
+                raise ValueError(f"Unknown physics status for {name}")
+            for metric in (*METRICS, *("d_"+m for m in METRICS)):
+                value = record.get(metric)
+                if value and not math.isfinite(float(value)):
+                    raise ValueError(f"Non-finite physics metric {metric} for {name}")
+            imported[name] = record
+    for row in rows:
+        record = imported.get(row["design"], {})
+        row.update(physics_status=record.get("physics_status", "not_evaluated_no_structure"),
+                   physics_scope=record.get("physics_scope", ""), physics_flags=record.get("physics_flags", ""),
+                   physics_missing_checks=record.get("physics_missing_checks", "candidate_structure_not_provided"),
+                   physics_error=record.get("physics_error", ""))
+        for metric in (*METRICS, *("d_"+m for m in METRICS)):
+            value = record.get(metric)
+            row["physics_"+metric] = float(value) if value else None
+        if not row["is_reference"]:
+            warning = row["physics_status"] != "no_geometry_warnings"
+            if warning:
+                row["data_warnings"] = ";".join(filter(None, (row["data_warnings"], "physics_"+row["physics_status"])))
+                if row["assessment"] == "no_warnings_detected":
+                    row["assessment"] = "needs_review"
+            row["review_notes"] += f" Physics geometry: {row['physics_status']}."
+            if row["physics_flags"]:
+                row["review_notes"] += " Geometry flags: " + row["physics_flags"] + "."
+            if row["physics_missing_checks"]:
+                row["review_notes"] += " Missing physics checks: " + row["physics_missing_checks"] + "."
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--input", "--fasta", dest="input", default="data/designs/variants.fasta")
@@ -546,6 +600,7 @@ def main(argv=None) -> int:
     ap.add_argument("--antifold", default=str(DEFAULT_ANTIFOLD), help="cached residue score CSV")
     ap.add_argument("--sequence-only", action="store_true", help="skip structure and AntiFold files")
     ap.add_argument("--ipsae", help="optional CSV: design,sequence,ipsae")
+    ap.add_argument("--physics", help="optional physics_review.csv from 06_physics_screen.py")
     ap.add_argument("--tol", type=float, default=1.0, help="uncalibrated absolute patch tolerance")
     ap.add_argument("--out", default="data/designs/developability_review.csv")
     args = ap.parse_args(argv)
@@ -555,9 +610,10 @@ def main(argv=None) -> int:
     structure_path = None if args.sequence_only else ROOT / args.structure
     af_path = None if args.sequence_only else ROOT / args.antifold
     ipsae_path = ROOT / args.ipsae if args.ipsae else None
+    physics_path = ROOT / args.physics if args.physics else None
     metadata_path = output.with_suffix(".metadata.json")
     # Avoid overwriting any input through a mistaken --out argument.
-    sources = [input_path, structure_path, af_path, ipsae_path, Path(__file__)]
+    sources = [input_path, structure_path, af_path, ipsae_path, physics_path, Path(__file__)]
     if output.resolve() == metadata_path.resolve() or any(
         target.resolve() == source.resolve()
         for target in (output, metadata_path) for source in sources if source is not None
@@ -580,6 +636,11 @@ def main(argv=None) -> int:
             warnings.append(f"antifold_unavailable:{exc}")
     rows = screen(sequences, parent_name=args.parent, surf=surf, lp=lp,
                   tol=args.tol, ipsae=ipsae, resource_warnings=warnings)
+    if physics_path:
+        try:
+            attach_physics(rows, physics_path)
+        except (OSError, ValueError, TypeError, csv.Error) as exc:
+            ap.error(str(exc))
     versions = {}
     for package in ("numpy", "biotite", "biopython"):
         try:
@@ -591,7 +652,7 @@ def main(argv=None) -> int:
         "parent_sequence": PARENT, "parent_sha256": sequence_hash(PARENT),
         "input": file_info(input_path), "script": file_info(Path(__file__)),
         "structure": file_info(structure_path), "antifold": file_info(af_path),
-        "ipsae": file_info(ipsae_path), "package_versions": versions,
+        "ipsae": file_info(ipsae_path), "physics": file_info(physics_path), "package_versions": versions,
         "parameters": vars(args), "resource_warnings": warnings,
         "limitations": [
             "Risk screening only; no expression yield, melting temperature or folding ddG prediction.",
@@ -602,6 +663,7 @@ def main(argv=None) -> int:
             "pI and charge are simple sequence estimates with fixed pKa values, not measured values.",
             "Instability index is descriptive; no universal threshold is used to reject scFvs.",
             "Missing ipSAE is separate from developability assessment; no ipSAE ranking is performed.",
+            "Attached physics geometry is structure-specific, may be incomplete, and is not an energy or expression prediction.",
         ],
     }
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -52,6 +52,17 @@ The optional `developability` extra in `pyproject.toml` declares Biopython:
 python -m pip install -e '.[developability]'
 ```
 
+CPU geometry screening is now available through `06_physics_screen.py`; see
+[PHYSICS_SCREENING.md](PHYSICS_SCREENING.md) for the parent observations,
+candidate structure manifest, scientific limits and team handoff. Attach its
+CSV with `--physics runs/physics_parent/physics_review.csv`. Import checks IDs,
+exact sequences, hashes and finite values. Missing candidate structures remain
+explicitly unassessed; the parent does not supply their geometry scores. The
+`physics_*` columns are separate from the original parent-backbone heuristics.
+When physics is requested, incomplete/flagged candidate geometry updates a
+previous `no_warnings_detected` assessment to `needs_review`, while preserving
+sequence-rule results. Omitting `--physics` preserves the existing screening path.
+
 Use the project's environment for installation. This workspace's `.venv` already
 has Biopython 1.88 installed. If Biopython is absent on another machine, screening
 continues with the instability metric explicitly unavailable. NumPy is required;
@@ -199,8 +210,10 @@ Existing rationale may already be in the team's research notes.
   metric/aggregation convention, seeds, Boltz-2 settings and HER2 domain-IV
   sequence/boundaries used. Include the parent control if it was run. These
   results can be attached through `--ipsae`; they are not required for screening.
-- Provide candidate structures and chain/residue mappings if candidate-specific
-  structural checks are wanted. That adapter is not implemented yet.
+- Provide candidate structures and chain/residue mappings for candidate-specific
+  checks through `06_physics_screen.py`. The explicit mapping adapter accepts
+  PDB/CIF/BCIF for substitution-only Fv or full-scFv structures; it does not build
+  mutant atoms or infer arbitrary numbering. See `PHYSICS_SCREENING.md`.
 - If whole-candidate AntiFold scores already exist, retain their method and
   antigen-inclusion metadata. They need a separate importer and must not replace
   the additive proxy column silently or be mixed with it in one ranking. The

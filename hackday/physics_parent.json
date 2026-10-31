@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "structures": [
+    {
+      "design": "PARENT",
+      "sequence_sha256": "0b9248c76a2b399791c47dbfa0d252b18284265f1dbca9ae8e66c0dd018c9f64",
+      "path": "../data/structures/1N8Z.pdb",
+      "scope": "fv_only",
+      "binder_segments": [
+        {
+          "chain": "B",
+          "start": 1,
+          "end": 120,
+          "sequence_start": 1
+        },
+        {
+          "chain": "A",
+          "start": 1,
+          "end": 107,
+          "sequence_start": 136
+        }
+      ],
+      "antigen_segments": [
+        {
+          "chain": "C",
+          "start": 480,
+          "end": 607
+        }
+      ]
+    }
+  ]
+}
