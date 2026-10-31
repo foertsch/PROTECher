@@ -1,5 +1,4 @@
 # data and model files stay local
-data/*
 !data/.gitkeep
 *.ckpt
 *.pt
@@ -16,8 +15,6 @@ __pycache__/
 # os
 .DS_Store
 
-# pipeline run outputs
-runs/
 
 # local code index
 .codegraph/
