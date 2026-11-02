@@ -302,11 +302,77 @@ def _charge_contact_metric(key: str) -> Metric:
     return metric
 
 
+def _d0(n) -> np.ndarray:
+    """TM-score d0 for `n` residues (Yang and Skolnick 2004), n taken as at least 26 and d0 floored at 1 A.
+    The same constants as Dunbrack's ipsae.py v4 (`calc_d0_array`); older versions floored at 1.04."""
+    n = np.maximum(26.0, np.asarray(n, dtype=float))
+    return np.maximum(1.0, 1.24 * (n - 15.0) ** (1.0 / 3.0) - 1.8)
+
+
+def _ipsae_direction(pae: np.ndarray, aligned: np.ndarray, scored: np.ndarray, pae_cutoff: float, d0: str) -> float:
+    """One direction of ipSAE: align on each residue of `aligned`, score the residues of `scored` whose PAE is below
+    the cutoff, average 1 / (1 + (PAE / d0)^2) over them, and keep the best aligned residue."""
+    block = pae[np.ix_(aligned, scored)]
+    valid = block < pae_cutoff
+    n_valid = valid.sum(axis=1)
+    if d0 == "res":                              # n from the scored residues that pass the cutoff, per aligned residue
+        d0_rows = _d0(n_valid)[:, None]
+    elif d0 == "chn":                            # n is both chains' residue count
+        d0_rows = _d0(aligned.sum() + scored.sum())
+    elif d0 == "dom":                            # n is the residues of both chains that take part in a passing pair
+        d0_rows = _d0(valid.any(axis=1).sum() + valid.any(axis=0).sum())
+    else:
+        raise ValueError(f"d0 must be 'res', 'chn' or 'dom', not {d0!r}")
+    ptm = 1.0 / (1.0 + (block / d0_rows) ** 2)
+    per_residue = np.where(n_valid > 0, (ptm * valid).sum(axis=1) / np.maximum(n_valid, 1), 0.0)
+    return float(per_residue.max())
+
+
+def ipsae(pae, chains, pae_cutoff: float = 15.0, d0: str = "res") -> dict[str, float]:
+    """ipSAE (Dunbrack 2025) of a two-chain complex, both directions.
+
+    `pae` is the full residue-by-residue PAE matrix in A (row = aligned residue, column = scored residue), `chains`
+    labels each residue and holds exactly two chains. `ab` aligns on the first chain and scores the second, `ba` the
+    reverse, `max` and `min` are the larger and smaller of the two. `d0` picks the variant: "res" (the default and the
+    one ipsae.py prints as ipSAE), "chn" or "dom". Distances play no part: ipsae.py's distance cutoff only counts
+    residues in its report. Protein chains only; nucleic acids get a different d0 floor in ipsae.py.
+
+    Checked against ipsae.py v4 on 30 Boltz-2 complexes of the trastuzumab scFv and HER2 (docs/track_a_final_pipeline.md).
+    """
+    pae = np.asarray(pae, dtype=float)
+    chains = np.asarray(chains)
+    labels = list(dict.fromkeys(chains.tolist()))
+    if len(labels) != 2:
+        raise ValueError(f"ipsae needs exactly two chains, got {len(labels)}")
+    if pae.shape != (len(chains), len(chains)):
+        raise ValueError(f"PAE is {pae.shape} but there are {len(chains)} residues")
+    first, second = chains == labels[0], chains == labels[1]
+    ab = _ipsae_direction(pae, first, second, pae_cutoff, d0)
+    ba = _ipsae_direction(pae, second, first, pae_cutoff, d0)
+    return {"ab": ab, "ba": ba, "max": max(ab, ba), "min": min(ab, ba)}
+
+
+def _ipsae_metric(key: str) -> Metric:
+    def metric(prediction: Design, reference: Design | None) -> float | None:
+        pae = _load_pae(prediction)
+        if pae is None:
+            return None
+        chains = _ca_atoms(prediction.path).chain_id
+        if len(set(chains)) != 2 or len(chains) != pae.shape[0]:
+            return None
+        return ipsae(pae, chains)[key]
+
+    metric.__name__ = f"ipsae_{key}"
+    metric.__doc__ = f"ipSAE ({key}) at PAE cutoff 15, d0 per residue; None unless the complex has two chains and a PAE matrix."
+    return metric
+
+
 METRICS: dict[str, Metric] = {
     "sc_rmsd": sc_rmsd,
     "mean_plddt": mean_plddt,
     "pae_interaction": pae_interaction,
     **{f"charge_contact_{key}": _charge_contact_metric(key) for key in ("contact", "coulomb", "eligible", "epitope_overlap", "paratope_net_charge")},
+    **{f"ipsae_{key}": _ipsae_metric(key) for key in ("ab", "ba", "max", "min")},
 }
 
 
