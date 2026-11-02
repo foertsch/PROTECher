@@ -464,10 +464,24 @@ rosetta_ddg = ContainerScorer(
     per_variant=True,
     value_column="ddg",
 )
+# FoldX is licensed per user and not in this repository. The script runs the user's own binary, named by
+# FOLDX_BINARY, on the structure named by DESIGN_PIPELINE_FOLDX_PDB (see _foldx_score.py for the settings).
+# DESIGN_PIPELINE_FOLDX names the Python that runs the script; the script needs only the standard library.
+FOLDX_SCRIPT = Path(__file__).with_name("_foldx_score.py")
+foldx_process = ProcessAdapter(
+    tool="foldx",
+    executable="python3",
+    command=(str(FOLDX_SCRIPT),),
+    env_var="DESIGN_PIPELINE_FOLDX",
+    input_template=("--pdb", "{path}"),
+    output_template=("--out_dir", "{path}"),
+    aliases={"candidates": "mutations_csv"},
+    path_kwargs=("candidates",),
+    output_globs=("foldx.csv",),
+)
 foldx = ContainerScorer(
     name="foldx",
-    # FoldX weights and binary are licensed; the image is the user's own build.
-    tool=None,
+    tool=foldx_process,
     sign=-1.0,
     per_variant=True,
     value_column="ddg",

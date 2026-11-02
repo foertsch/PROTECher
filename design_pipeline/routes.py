@@ -253,8 +253,10 @@ ROUTES: Mapping[str, Route] = {
     "foldx": Route(
         step=SCORE,
         env=MANUAL,
-        how="licence-gated: build your own image, then set REGISTRY['foldx']",
+        how="licence-gated: your own FoldX binary. Set FOLDX_BINARY, DESIGN_PIPELINE_FOLDX_PDB and DESIGN_PIPELINE_FOLDX (the Python that runs adapters/_foldx_score.py)",
         verified=True,
+        env_var="DESIGN_PIPELINE_FOLDX",
+        needs_env=("FOLDX_BINARY",),
     ),
     "alphafold3": Route(
         step=STRUCTURE,
