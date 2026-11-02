@@ -204,4 +204,4 @@ other three.
 
 ## Status
 
-Challenge details are unknown until the event. Preparation notes are in [docs/challenge_notes.md](docs/challenge_notes.md) and [docs/filtering_strategy.md](docs/filtering_strategy.md).
+Challenge details are unknown until the event. Preparation notes are in [docs/challenge_notes.md](docs/challenge_notes.md) and [docs/filtering_strategy.md](docs/filtering_strategy.md). The chain that produced the submitted Track A designs is in [docs/track_a_final_pipeline.md](docs/track_a_final_pipeline.md).
