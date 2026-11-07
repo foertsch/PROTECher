@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import re
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -172,3 +173,57 @@ def test_preflight_probes_nothing_it_cannot_probe_cheaply() -> None:
     ok, how = routes.resolve("rfdiffusion")
 
     assert ok and how == "image pinned, not pulled"
+
+
+# ---- the FoldX licence expiry ------------------------------------------------
+
+
+def test_the_foldx_expiry_is_read_out_of_the_binary_name() -> None:
+    """The date is in the filename and nowhere else - the binary does not
+    report it, so this is the only place it can come from."""
+    assert preflight.foldx_expiry("/home/u/tools/foldx/foldx_20261231") == date(
+        2026, 12, 31
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["foldx", "foldx5", "foldx_linux64", "", "foldx_99999999", "foldx_20261345"],
+)
+def test_a_binary_with_no_usable_date_is_not_an_error(name: str) -> None:
+    """A renamed binary carries no date. That must mean "nothing to say" rather
+    than a crash or a false warning - preflight has to stay runnable."""
+    assert preflight.foldx_expiry(name) is None
+
+
+def test_preflight_warns_inside_thirty_days() -> None:
+    notice = preflight.foldx_notice(date(2026, 12, 10), "/x/foldx_20261231")
+
+    assert notice is not None and "21 day" in notice
+
+
+def test_preflight_says_nothing_while_the_licence_is_comfortable() -> None:
+    assert preflight.foldx_notice(date(2026, 1, 1), "/x/foldx_20261231") is None
+
+
+def test_preflight_says_so_after_the_licence_has_expired() -> None:
+    notice = preflight.foldx_notice(date(2027, 1, 5), "/x/foldx_20261231")
+
+    assert notice is not None and "expired" in notice
+
+
+def test_the_expiry_warning_is_a_warning_and_not_an_exit_status(capsys, monkeypatch) -> None:
+    """A date read off a filename must not be able to fail a campaign. The exit
+    status stays the default campaign's business."""
+    # A 20xx date: the stamp pattern is anchored to that century on purpose, so
+    # that an arbitrary run of eight digits in a filename is not read as one.
+    monkeypatch.setenv("FOLDX_BINARY", "/x/foldx_20240101")
+
+    code = preflight.main([])
+    printed = capsys.readouterr().out
+
+    assert "expired" in printed
+    # 1 because the suite installs no model, not because of the licence: the
+    # unresolved-campaign line is what decides it.
+    assert "default campaign NOT ready here" in printed
+    assert code == 1

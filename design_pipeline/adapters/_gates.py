@@ -14,16 +14,18 @@ every one of them is overridable per call
 
 from __future__ import annotations
 
+import csv
+import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from ..containers import ContainerAdapter, ProcessAdapter, make_id
 from ..designs import Design
 from ..errors import MissingRuntimeError
 from ..routes import require
-from ..structures import chain_sequence
+from ..structures import chain_residue_ids, chain_sequence
 from ._tabular import CANDIDATES, CHECKS, read_candidates, read_tool_table, write_checks
 
 # Each entry is (label, pattern). The pattern is wrapped in a lookahead when it
@@ -123,6 +125,38 @@ class LiabilityCheck:
         ]
 
 
+def threshold_rows(
+    name: str,
+    wanted: Mapping[str, object],
+    values: Mapping[str, float],
+    column: str,
+    limit: float,
+    fail_above: bool,
+) -> list[tuple[str, bool, str]]:
+    """One (variant_id, passed, reason) per candidate, in candidate order.
+
+    A candidate with no value survives. Gate only on confident failures, and
+    "the tool said nothing about this one" is not one of those - the reason
+    records that nothing was measured rather than dropping it.
+    """
+    rows: list[tuple[str, bool, str]] = []
+    for variant_id in wanted:
+        value = values.get(variant_id)
+        if value is None:
+            rows.append((variant_id, True, f"{name}: no value"))
+            continue
+        failed = value > limit if fail_above else value < limit
+        side = ">" if fail_above else "<"
+        rows.append(
+            (
+                variant_id,
+                not failed,
+                f"{name}: {column}={value:.3f} {side} {limit:g}" if failed else "",
+            )
+        )
+    return rows
+
+
 @dataclass(frozen=True)
 class ContainerCheck:
     """A developability container, reduced to a threshold on one column.
@@ -178,25 +212,9 @@ class ContainerCheck:
         )
         wanted = read_candidates(Path(candidates))
 
-        rows: list[tuple[str, bool, str]] = []
-        for variant_id in wanted:
-            value = values.get(variant_id)
-            if value is None:
-                # No answer is not a confident failure. The candidate survives
-                # and the reason records that nothing was measured.
-                rows.append((variant_id, True, f"{self.name}: no value"))
-                continue
-            failed = value > limit if self.fail_above else value < limit
-            side = ">" if self.fail_above else "<"
-            rows.append(
-                (
-                    variant_id,
-                    not failed,
-                    f"{self.name}: {column}={value:.3f} {side} {limit:g}"
-                    if failed
-                    else "",
-                )
-            )
+        rows = threshold_rows(
+            self.name, wanted, values, column, limit, self.fail_above
+        )
         path = write_checks(output_dir / CHECKS, rows)
         return [
             Design(
@@ -226,33 +244,242 @@ def check_container(image: str, *, gpu: bool = True) -> ContainerAdapter:
     )
 
 
-# ThermoMPNN installs from its repository into its own mamba environment - its
-# environment.yaml, which its README warns can resolve a CPU-only torch - so
-# the adapter runs that environment's interpreter rather than anything on PATH.
+INFERENCE_SCRIPT = ("analysis", "custom_inference.py")
+"""Where ThermoMPNN's prediction script sits inside the clone."""
+
+# ThermoMPNN ships no console script - its pyproject sets `package = false` -
+# so there is nothing to put on PATH and nothing for `-m` to import. The
+# adapter runs the script out of the clone with the interpreter of whichever
+# environment it was installed into, uv or mamba. The script path is
+# per-install, so `command` is filled in at call time from THERMOMPNN_SRC
+# rather than frozen here.
 thermompnn_process = ProcessAdapter(
     tool="thermompnn",
-    executable="thermompnn",
+    executable="python",
     env_var="DESIGN_PIPELINE_THERMOMPNN",
     input_template=("--pdb", "{path}"),
     output_template=("--out_dir", "{path}"),
-    aliases={"candidates": "mutations_csv"},
-    path_kwargs=("candidates",),
-    output_globs=("*.csv",),
+    output_globs=("ThermoMPNN_inference_*.csv",),
 )
+
+
+def thermompnn_source() -> Path:
+    """The ThermoMPNN clone, from THERMOMPNN_SRC."""
+    found = os.environ.get("THERMOMPNN_SRC")
+    if not found:
+        raise MissingRuntimeError(
+            "thermompnn needs THERMOMPNN_SRC (or src=): the ThermoMPNN clone, "
+            f"the folder holding {'/'.join(INFERENCE_SCRIPT)}. The "
+            "interpreter in $DESIGN_PIPELINE_THERMOMPNN cannot import it - the "
+            "repo sets `package = false`, so there is nothing on its path to "
+            "find. `python -m design_pipeline.preflight` prints the table."
+        )
+    return Path(found)
+
+
+def thermompnn_index(labels: Sequence[str]) -> dict[int, int]:
+    """Chain position (1-based, file order) -> ThermoMPNN's sequence index.
+
+    ThermoMPNN does not speak the file's residue numbers, and its output is not
+    in chain positions either. `alt_parse_PDB` keys every residue by
+    `int(resSeq) - 1`, walks `range(min, max + 1)` and emits a '-' for each
+    number in that span with no residue, so the `position` column is an index
+    into that gap-padded string: the author number less the lowest author
+    number present, shifted along by every insertion code before it.
+
+    Reconstructed from the labels rather than applied as one offset, because an
+    antibody chain has both - gaps where a loop was not modelled, and 100A/100B
+    insertions in CDR H3 - and an offset alone would be wrong after the first
+    of either.
+    """
+    parsed: list[tuple[int, str]] = []
+    for label in labels:
+        text = str(label).strip()
+        code = text[-1] if text and text[-1].isalpha() else ""
+        parsed.append((int(text[: len(text) - len(code)] if code else text), code))
+
+    by_number: dict[int, list[str]] = {}
+    for number, code in parsed:
+        by_number.setdefault(number, []).append(code)
+
+    index_of: dict[tuple[int, str], int] = {}
+    cursor = 0
+    for number in range(min(by_number), max(by_number) + 1):
+        if number not in by_number:
+            cursor += 1  # the '-' standing in for a number with no residue
+            continue
+        for code in sorted(by_number[number]):
+            index_of[(number, code)] = cursor
+            cursor += 1
+    return {position + 1: index_of[key] for position, key in enumerate(parsed)}
+
+
+def read_ssm_table(
+    paths: Sequence[Path], value_column: str = "ddG_pred"
+) -> dict[tuple[int, str], tuple[float, str]]:
+    """ThermoMPNN's own CSV as (index, mutant) -> (value, wild type).
+
+    The wild-type letter comes along because it is the only thing in that file
+    that can tell us the numbering lined up, which is what the caller checks.
+    """
+    found: dict[tuple[int, str], tuple[float, str]] = {}
+    needed = {value_column, "position", "wildtype", "mutation"}
+    for path in paths:
+        if path.suffix.lower() != ".csv":
+            continue
+        with path.open(newline="", encoding="utf-8", errors="replace") as handle:
+            reader = csv.DictReader(handle)
+            if not needed <= set(reader.fieldnames or ()):
+                continue
+            for row in reader:
+                try:
+                    found[(int(row["position"]), row["mutation"])] = (
+                        float(row[value_column]),
+                        row["wildtype"],
+                    )
+                except (TypeError, ValueError):
+                    continue
+    if not found:
+        names = ", ".join(str(p.name) for p in paths) or "nothing"
+        raise ValueError(
+            f"no rows carrying {value_column!r}, 'position', 'wildtype' and "
+            f"'mutation' in {names}. Pass value_column= if this version of "
+            f"ThermoMPNN names its prediction column differently."
+        )
+    return found
+
+
+@dataclass(frozen=True)
+class ThermoMPNNCheck:
+    """Predicted folding ddG, destabilizing positive, from site saturation.
+
+    Its own contract rather than `ContainerCheck`'s, because the tool does not
+    fit that one. `analysis/custom_inference.py` takes a PDB and a single
+    chain, mutates every position of that chain to all twenty residues, and
+    writes a table keyed by its own sequence index. So: one call per chain
+    rather than one per candidate, the candidates joined onto that table
+    afterwards, and no value at all for a multi-mutation candidate, since the
+    script cannot be asked about a combination.
+
+    The join is checked rather than trusted. ThermoMPNN reports the wild-type
+    residue it thinks is at each index, and a disagreement with the candidate
+    table means the numbering did not line up, which `run` raises on instead of
+    passing or failing candidates on values that belong to other positions.
+
+    1.5 kcal/mol is loose for the same reason as the rest of the gate: a
+    marginal prediction is not a confident failure.
+    """
+
+    name: str = "thermompnn"
+    value_column: str = "ddG_pred"
+    threshold: float = 1.5
+    tool: ProcessAdapter | None = None
+    fail_above: bool = True
+    per_variant: bool = True
+    requires_structure: bool = True
+    id_column: str = "variant_id"
+
+    def run(
+        self,
+        inputs: Sequence[Design],
+        output_dir: Path,
+        *,
+        candidates: Path | str | None = None,
+        src: Path | str | None = None,
+        extra_args: Sequence[str] | None = None,
+        threshold: float | None = None,
+        value_column: str | None = None,
+        **kwargs: Any,
+    ) -> list[Design]:
+        if candidates is None:
+            raise ValueError(f"{self.name} needs candidates=<path to {CANDIDATES}>")
+        # Asked before anything is read, so a missing install arrives as its
+        # install route rather than as a parse error on someone's structure.
+        require(self.name)
+        if self.tool is None:
+            raise MissingRuntimeError(
+                f"{self.name} is installed, but this package has no verified "
+                f"way to invoke it. Set REGISTRY[{self.name!r}]; "
+                f"`python -m design_pipeline.preflight` prints the table."
+            )
+        limit = self.threshold if threshold is None else float(threshold)
+        column = value_column or self.value_column
+        script = (Path(src) if src is not None else thermompnn_source()).joinpath(
+            *INFERENCE_SCRIPT
+        )
+        if not script.is_file():
+            raise MissingRuntimeError(
+                f"{script} does not exist. THERMOMPNN_SRC (or src=) has to be "
+                f"the clone itself, the folder holding "
+                f"{'/'.join(INFERENCE_SCRIPT)}."
+            )
+        if not inputs:
+            raise ValueError(
+                f"{self.name} needs the structure its candidates are indexed "
+                f"against, as inputs[0]"
+            )
+
+        structure = inputs[0].path
+        wanted = read_candidates(Path(candidates))
+        # One mutation only: site saturation says nothing about a combination,
+        # and summing two of its numbers would be inventing an answer.
+        singles = {
+            variant_id: mutations[0]
+            for variant_id, mutations in wanted.items()
+            if len(mutations) == 1
+        }
+
+        runner = replace(self.tool, command=(str(script),))
+        values: dict[str, float] = {}
+        for chain in sorted({mutation[0] for mutation in singles.values()}):
+            # Per chain, because the script takes one --chain and writes the
+            # same filename every time: a shared directory would look like a
+            # run that produced nothing the second time around.
+            chain_dir = output_dir / f"chain_{chain}"
+            chain_dir.mkdir(parents=True, exist_ok=True)
+            produced = runner.run(
+                inputs[:1],
+                chain_dir,
+                extra_args=extra_args,
+                chain=chain,
+                **kwargs,
+            )
+            table = read_ssm_table([d.path for d in produced], column)
+            index_of = thermompnn_index(chain_residue_ids(structure, chain))
+            for variant_id, (its_chain, position, wt, mut) in singles.items():
+                if its_chain != chain:
+                    continue
+                answer = table.get((index_of.get(position, -1), mut))
+                if answer is None:
+                    continue
+                value, wildtype = answer
+                if wildtype != wt:
+                    raise ValueError(
+                        f"{self.name} disagrees about position {position} of "
+                        f"chain {chain}: the candidates say the wild type is "
+                        f"{wt!r}, ThermoMPNN's index "
+                        f"{index_of.get(position)} says {wildtype!r}. Either "
+                        f"the structure handed to the gate is not the one the "
+                        f"candidates were built against, or this version "
+                        f"numbers its output differently."
+                    )
+                values[variant_id] = value
+
+        rows = threshold_rows(self.name, wanted, values, column, limit, self.fail_above)
+        path = write_checks(output_dir / CHECKS, rows)
+        return [
+            Design(
+                id=make_id(path, output_dir),
+                path=path,
+                parent_id=inputs[0].id,
+                producer=self.name,
+            )
+        ]
 
 
 liabilities = LiabilityCheck()
 
-# Predicted change in folding stability, destabilizing positive. 1.5 kcal/mol
-# is loose on purpose: a marginal prediction is not a confident failure.
-thermompnn = ContainerCheck(
-    name="thermompnn",
-    tool=thermompnn_process,
-    value_column="ddg",
-    threshold=1.5,
-    fail_above=True,
-    per_variant=True,
-)
+thermompnn = ThermoMPNNCheck(tool=thermompnn_process)
 # Aggregation propensity, structure-based, so one model per candidate.
 aggrescan3d = ContainerCheck(
     name="aggrescan3d",

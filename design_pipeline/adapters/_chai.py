@@ -44,13 +44,30 @@ def load_run_inference() -> Callable[..., Any]:
     Importing design_pipeline must not import a model, and this import brings
     torch with it.
     """
+    import os
+
     try:
         from chai_lab.chai1 import run_inference
     except ModuleNotFoundError as exc:  # pragma: no cover - needs the extra
+        # The one Env B tool with no path to point at. Every other adapter here
+        # shells out, so DESIGN_PIPELINE_<TOOL> is enough to reach it from Env
+        # A; this one imports, so the variable can only tell you where the
+        # environment is - you have to be running inside it. Said explicitly,
+        # because a set variable and a failing import looks like a bug
+        # otherwise.
+        configured = os.environ.get("DESIGN_PIPELINE_CHAI", "").strip()
+        where = (
+            f" $DESIGN_PIPELINE_CHAI is set to {configured}, but chai runs in "
+            "process: run this from inside that environment rather than "
+            "pointing at it from here."
+            if configured
+            else ""
+        )
         raise MissingDependencyError(
-            "chai_lab is not installed. Install the optional extra with "
-            "`uv pip install -e '.[chai]'` (or `pip install chai_lab`), or use "
-            "model_name='dummy_chai' to run the loop without a folding model."
+            "chai_lab is not installed in this interpreter. Install the "
+            "optional extra with `uv pip install -e '.[chai]'` (or `pip "
+            "install chai_lab`) and run from inside that environment, or use "
+            f"model_name='dummy_chai' to run the loop without a folding model.{where}"
         ) from exc
     return run_inference
 

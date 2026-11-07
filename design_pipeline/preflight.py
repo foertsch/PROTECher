@@ -18,7 +18,10 @@ from __future__ import annotations
 import argparse
 import os
 import platform
+import re
 import sys
+from datetime import date
+from pathlib import PurePath
 from typing import Iterable, Sequence
 
 from .adapters._gates import DEFAULT_CHECKS
@@ -35,6 +38,57 @@ DEFAULT_CAMPAIGN: tuple[str, ...] = (
 and check sets. These are the rows that decide the exit status."""
 
 COLUMNS = ("adapter", "step", "env", "resolved", "how")
+
+FOLDX_STAMP = re.compile(r"(?<!\d)(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(?!\d)")
+"""The expiry date an academic FoldX build carries in its filename, as in
+`foldx_20261231`. A convention, not something the binary reports."""
+
+EXPIRY_WARNING_DAYS = 30
+
+
+def foldx_expiry(binary: str | None = None) -> date | None:
+    """The licence expiry in `FOLDX_BINARY`'s filename, or None.
+
+    None means "nothing to say", not "fine": a renamed binary carries no date
+    and must not make preflight complain, and must not make it fail either.
+    """
+    value = (binary if binary is not None else os.environ.get("FOLDX_BINARY", "")).strip()
+    if not value:
+        return None
+    match = FOLDX_STAMP.search(PurePath(value).name)
+    if match is None:
+        return None
+    try:
+        return date(*(int(part) for part in match.groups()))
+    except ValueError:  # pragma: no cover - the regex already bounds these
+        return None
+
+
+def foldx_notice(today: date | None = None, binary: str | None = None) -> str | None:
+    """A warning when the FoldX licence is within 30 days of expiry, or past it.
+
+    A warning rather than a failure, deliberately. The date is read off a
+    filename, so a false positive must not stop a campaign - and an academic
+    FoldX licence is free to renew but takes a few days, which is exactly the
+    kind of thing worth hearing about before the run rather than during it.
+    """
+    expiry = foldx_expiry(binary)
+    if expiry is None:
+        return None
+    remaining = (expiry - (today or date.today())).days
+    if remaining < 0:
+        return (
+            f"FoldX licence expired {-remaining} day(s) ago ({expiry.isoformat()}, "
+            f"read from the FOLDX_BINARY filename). Renew it at "
+            f"foldxsuite.crg.eu; `foldx` scores will fail until you do."
+        )
+    if remaining <= EXPIRY_WARNING_DAYS:
+        return (
+            f"FoldX licence expires in {remaining} day(s) ({expiry.isoformat()}, "
+            f"read from the FOLDX_BINARY filename). An academic renewal is free "
+            f"but takes a few days - start it before the next campaign."
+        )
+    return None
 
 
 def rows(names: Iterable[str]) -> list[tuple[str, ...]]:
@@ -103,6 +157,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     print()
     print("not adapters, but part of an environment:")
     print(render(rows(extras)))
+
+    notice = foldx_notice()
+    if notice is not None:
+        print()
+        print(f"warning: {notice}")
 
     unresolved = [n for n in DEFAULT_CAMPAIGN if not resolve(n)[0]]
     print()

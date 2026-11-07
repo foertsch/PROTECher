@@ -76,7 +76,7 @@ of this table — the errors and `preflight` both read it.
 
 "Env B" is one label for several possible environments. Each of its models is
 reached by its own path, so whether AntiFold and ThermoMPNN actually share one
-mamba environment is a question for the dry run — their pins may force two.
+environment is a question for the dry run — their pins may force two.
 Nothing in the code assumes either way; that is what `executable=` is for.
 
 Adapters in another environment are reached by path, not by import — the
@@ -87,7 +87,8 @@ score_variants(complex_, variants, models=["antifold"],
                executable="/opt/envs/antifold/bin/python")
 # or, once, for the whole session:
 export DESIGN_PIPELINE_ANTIFOLD=/opt/envs/antifold/bin/python
-export DESIGN_PIPELINE_THERMOMPNN=/opt/envs/thermompnn/bin/thermompnn
+export DESIGN_PIPELINE_THERMOMPNN=/opt/envs/thermompnn/bin/python
+export THERMOMPNN_SRC=/opt/src/ThermoMPNN
 ```
 
 `antifold` is run through the repo's `antifold_score` module, and its table route
@@ -97,6 +98,15 @@ stops with `--route table needs --table, or --antifold_src (or ANTIFOLD_SRC)`.
 `preflight` still lists `antifold` as resolved and adds `(ANTIFOLD_SRC not set)`
 to its row. `antifold` scores single mutations only; for pairs and larger sets
 use `antifold_seq`.
+
+`thermompnn` needs the same pair of variables, for the same reason and then
+one more: the repo sets `package = false` and ships no console script, so
+`DESIGN_PIPELINE_THERMOMPNN` is that environment's **python**, not a binary,
+and `THERMOMPNN_SRC` (or `src=`) is the clone, the folder holding
+`analysis/custom_inference.py`. That script site-saturates one chain per call
+and takes no mutation list, so the adapter runs it once per chain the
+candidates touch and joins the result back on; a multi-mutation candidate gets
+no value and therefore passes the gate unmeasured.
 
 #### AntiFold cannot go in Env A
 
@@ -427,8 +437,8 @@ What each one actually needs, and whether we have checked it:
 | `ablang2` | Env A | `pip install ablang2` | yes |
 | `esm1v`, `esm2_650m` | Env A | `pip install 'design-pipeline[plm]'` | yes |
 | `antiberty` | Env A | `pip install antiberty` | no |
-| `consensus`, `liabilities` | — | bundled; `consensus` needs an OAS table | yes |
-| `thermompnn` | Env B | `git clone https://github.com/Kuhlman-Lab/ThermoMPNN`, build its `environment.yaml` with mamba | yes |
+| `consensus`, `liabilities` | — | bundled; `consensus` needs an OAS table that has never been built, so it is out of `DEFAULT_SCORERS` ([docs/provisioning.md](docs/provisioning.md)) | yes |
+| `thermompnn` | Env B | `git clone https://github.com/Kuhlman-Lab/ThermoMPNN`, then `uv sync --extra cu121` against its own `pyproject.toml` (or `mamba env create -f environment.yaml`); needs `THERMOMPNN_SRC` | route yes, invocation no |
 | `gearbind` | container | build from `https://github.com/DeepGraphLearning/GearBind`; no published image | yes |
 | `rosetta_ddg` | manual | licence-gated. An official `rosettacommons/rosetta` image does exist (23 tags) but is not configured here | yes |
 | `foldx` | manual | licence-gated; your own image | yes |

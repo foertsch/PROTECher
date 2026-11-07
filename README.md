@@ -90,14 +90,18 @@ one refuses a table of more than a couple of thousand rows.
 | `antifold_seq` | per variant | the same model over a whole mutated chain, so a combination is scored as one mutant |
 | `esm_if` | matrix | general inverse folding |
 | `abmpnn`, `proteinmpnn_score` | matrix | same shape, lower priority |
-| `consensus` | matrix | positional consensus from a cached OAS table; no model, no GPU |
+| `consensus` | matrix | positional consensus from a cached OAS table; no model, no GPU. Needs a table that does not exist yet — see [docs/provisioning.md](docs/provisioning.md) |
 | `gearbind` | per variant | supervised ddG, the one with wet-lab validation |
 | `rosetta_ddg` | per variant | Rosetta Flex ddG; slow, errors uncorrelated with the learned models |
 | `foldx` | per variant | cheaper physics baseline, licence permitting |
 | `dummy_scorer`, `dummy_per_variant` | — | deterministic fixtures, offline |
 
-With no `models=`, `score_variants` runs `ablang2` and `consensus`
-(`DEFAULT_SCORERS`), neither of which needs a structure-model environment.
+With no `models=`, `score_variants` runs `ablang2` alone (`DEFAULT_SCORERS`),
+which needs no structure-model environment and no GPU. `consensus` was the
+second default until 2026-11-06 and was removed because the OAS frequency table
+it needs was never built, so it raised on every fresh checkout; the adapter and
+route are unchanged and `models=["consensus"]` works as soon as a table exists.
+[docs/provisioning.md](docs/provisioning.md) has the four steps to build one.
 
 `score_<model>` is normalized at the adapter boundary so higher always means
 better binding; `score_<model>_raw` keeps the tool's own number, so a
@@ -115,7 +119,7 @@ and the reliable signal is a hard sequence liability.
 |---|---|---|
 | `liabilities` | free | new N-glycosylation sequon (N-x-S/T), deamidation (NG/NS/NT), isomerization (DG/DS/DD), fragmentation (DP), introduced cysteine |
 | `netsolp` | sequence | predicted solubility |
-| `thermompnn`, `aggrescan3d` | per variant | folding stability, aggregation |
+| `thermompnn`, `aggrescan3d` | per variant | folding stability (single mutations only — it site-saturates a chain and cannot be asked about a combination), aggregation |
 
 ### Validation harness
 

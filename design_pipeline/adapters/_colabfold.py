@@ -51,6 +51,9 @@ def find_scores_json(pdb: Path) -> Path | None:
 @dataclass(frozen=True)
 class ColabFoldAdapter:
     executable: str = "colabfold_batch"
+    env_var: str | None = "DESIGN_PIPELINE_COLABFOLD"
+    """Where colabfold_batch lives when it is not on this PATH. The same
+    variable `routes.py` probes, so preflight and the run agree."""
     aliases: Mapping[str, str] = field(
         default_factory=lambda: {"recycles": "num-recycle", "seed": "random-seed"}
     )
@@ -64,14 +67,7 @@ class ColabFoldAdapter:
         host_url: str = PUBLIC_MSA_SERVER,
         **kwargs: Any,
     ) -> list[Design]:
-        exe = shutil.which(self.executable)
-        if exe is None:
-            raise MissingDependencyError(
-                f"{self.executable!r} is not on PATH. Install the optional "
-                "extra with `uv pip install 'design-pipeline[colabfold]'` (or "
-                "`pip install colabfold`), or use model_name="
-                "'dummy_structures' to run the loop without a folding model."
-            )
+        exe = self._resolve()
         args = format_kwargs(kwargs, "flag", self.aliases, dash_flags=True)
         # Explicit, so a local MSA server can be pointed at later.
         args += ["--host-url", host_url]
@@ -106,3 +102,22 @@ class ColabFoldAdapter:
                 f"{self.executable} wrote no PDB files under {output_dir}"
             )
         return designs
+
+    def _resolve(self) -> str:
+        from ..routes import configured_path
+
+        configured = configured_path(self.env_var) if self.env_var else None
+        if configured is not None:
+            return str(configured)
+        found = shutil.which(self.executable)
+        if found:
+            return found
+        raise MissingDependencyError(
+            f"{self.executable!r} is not on PATH and ${self.env_var} is not "
+            "set. Install the optional extra with `uv pip install "
+            "'design-pipeline[colabfold]'` (or `pip install colabfold`) into "
+            f"its own environment and point ${self.env_var} at that "
+            "environment's `colabfold_batch`, or use "
+            "model_name='dummy_structures' to run the loop without a folding "
+            "model."
+        )

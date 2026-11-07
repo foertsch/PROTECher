@@ -70,6 +70,10 @@ class MPNNAdapter:
     executable: str = "ligandmpnn"
     """Console script from the `ligandmpnn` wheel. Override with an absolute
     path to run it out of a separate environment."""
+    env_var: str | None = "DESIGN_PIPELINE_MPNN"
+    """The same variable `routes.py` probes, and the one all three model types
+    share - they are one install. Not provisioned any more (de novo design), but
+    reached the same way as everything else in Env B while the adapter exists."""
     aliases: Mapping[str, str] = field(default_factory=dict)
     """LigandMPNN's own flags are underscored, so this is mostly empty."""
 
@@ -123,6 +127,13 @@ class MPNNAdapter:
         return designs
 
     def _resolve(self) -> str:
+        from ..routes import configured_path
+
+        # Asked first, for the same reason the explicit executable= below is
+        # honoured: the pins mean this almost never lives on our PATH.
+        configured = configured_path(self.env_var) if self.env_var else None
+        if configured is not None:
+            return str(configured)
         found = shutil.which(self.executable)
         if found:
             return found
@@ -131,7 +142,8 @@ class MPNNAdapter:
         if Path(self.executable).is_file():
             return str(Path(self.executable))
         raise MissingDependencyError(
-            f"{self.executable!r} is not on PATH. Install the optional extra "
+            f"{self.executable!r} is not on PATH and ${self.env_var} is not "
+            "set. Install the optional extra "
             "with `uv pip install -e '.[mpnn]'` (or `pip install ligandmpnn`). "
             "Its pins (torch==2.2.1, numpy==1.23.5, Python <3.12) conflict "
             "with this package's, so the usual fix is a separate environment: "

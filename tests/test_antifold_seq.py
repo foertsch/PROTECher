@@ -351,7 +351,9 @@ def test_it_is_registered_next_to_antifold_but_is_not_a_default_scorer():
     assert REGISTRY["antifold_seq"] is _scorers.antifold_seq and "antifold" in REGISTRY
     # neither AntiFold scorer is a default any more (CHANGELOG.md, 2026-10-31); both stay registered
     assert not {"antifold_seq", "antifold"} & set(_scorers.DEFAULT_SCORERS)
-    assert _scorers.DEFAULT_SCORERS == ("ablang2", "consensus")
+    # `consensus` went too on 2026-11-06: its OAS frequency table was never built,
+    # so it raised on every fresh checkout. One default is left.
+    assert _scorers.DEFAULT_SCORERS == ("ablang2",)
 
 
 def test_it_is_per_variant_so_the_uncapped_table_guard_applies():

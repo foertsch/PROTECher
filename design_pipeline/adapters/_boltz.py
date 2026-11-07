@@ -100,6 +100,11 @@ class BoltzAdapter:
 
     executable: str = "boltz"
     extra: str = "boltz"
+    env_var: str | None = "DESIGN_PIPELINE_BOLTZ"
+    """Where Boltz lives when it is not on this PATH, which is the normal case:
+    it pins torch 2.15 and a mixed CUDA wheel set, so it gets its own
+    environment. The same variable `routes.py` probes, so preflight and the run
+    cannot disagree about which boltz is meant."""
     aliases: Mapping[str, str] = field(default_factory=dict)
     """Boltz's own options are underscored, so this is empty."""
 
@@ -160,14 +165,24 @@ class BoltzAdapter:
         return designs
 
     def _resolve(self) -> str:
+        from ..routes import configured_path
+
+        # Asked first: an absolute path into the Boltz environment is the
+        # supported way to reach it, and PATH in Env A does not have it.
+        configured = configured_path(self.env_var) if self.env_var else None
+        if configured is not None:
+            return str(configured)
         found = shutil.which(self.executable)
         if found:
             return found
         raise MissingDependencyError(
-            f"{self.executable!r} is not on PATH. Install the optional extra "
+            f"{self.executable!r} is not on PATH and "
+            f"${self.env_var} is not set. Install the optional extra "
             "with `uv pip install -e '.[boltz]'` (or `pip install "
-            "'boltz[cuda]'`), or use model_name='dummy_boltz' to run the loop "
-            "without a folding model."
+            "'boltz[cuda]'`) into its own environment and point "
+            f"${self.env_var} at that environment's `boltz`; "
+            "provision/boltz.sh does both. Or use model_name='dummy_boltz' to "
+            "run the loop without a folding model."
         )
 
     def _cache(self) -> Path:

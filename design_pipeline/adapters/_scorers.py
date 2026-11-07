@@ -510,16 +510,26 @@ PER_VARIANT_SCORERS: tuple[str, ...] = (
     "foldx",
     "dummy_per_variant",
 )
-DEFAULT_SCORERS: tuple[str, ...] = ("ablang2", "consensus")
+DEFAULT_SCORERS: tuple[str, ...] = ("ablang2",)
 """What `score_variants` runs when nothing is named.
 
-Two columns that disagree by construction - sequence-based and
-frequency-based - and both install into one environment:
+One column, which installs into Env A and needs no GPU:
 
 * `ablang2`    a paired-antibody language model: the only one that knows what
                an antibody is allowed to look like at a framework position.
-* `consensus`  positional repertoire frequencies: no model, free, and
-               uncorrelated with the above.
+
+`consensus` was the second column until 2026-11-06 and is not here any more.
+Not because it ranked badly - it was never run - but because it cannot run: it
+needs an OAS frequency table that `DESIGN_PIPELINE_OAS_TABLE` points at, and
+that table was never built. It is not in the repository's history, not in the
+cluster inventory, and `consensus` appears in no result table we have. A
+default that raises `MissingDependencyError` on every fresh checkout is not a
+default.
+
+The adapter, the route and the registry entry are unchanged, so
+`models=["consensus"]` works the moment a table exists. Building one is an open
+task; docs/provisioning.md says what the file has to contain and where the
+download is.
 
 `antifold` was the third column until 2026-10-31 and is not here any more
 (`antifold_seq`, its per-variant counterpart, was never a default). Both

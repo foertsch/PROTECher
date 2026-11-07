@@ -118,6 +118,10 @@ class ProtenixAdapter:
 
     executable: str = "protenix"
     extra: str = "protenix"
+    env_var: str | None = "DESIGN_PIPELINE_PROTENIX"
+    """The same variable `routes.py` probes. Protenix is not provisioned any
+    more - it served de novo design - but the adapter stays, and an adapter that
+    stays has to be reachable the same way the others are."""
 
     def run(
         self,
@@ -169,14 +173,22 @@ class ProtenixAdapter:
         return designs
 
     def _resolve(self) -> str:
+        from ..routes import configured_path
+
+        configured = configured_path(self.env_var) if self.env_var else None
+        if configured is not None:
+            return str(configured)
         found = shutil.which(self.executable)
         if found:
             return found
         raise MissingDependencyError(
-            f"{self.executable!r} is not on PATH. Install the optional extra "
+            f"{self.executable!r} is not on PATH and "
+            f"${self.env_var} is not set. Install the optional extra "
             "with `uv pip install -e '.[protenix]'` (or `pip3 install "
-            "protenix`), or use model_name='dummy_protenix' to run the loop "
-            "without a folding model."
+            "protenix`) into its own environment and point "
+            f"${self.env_var} at that environment's `protenix`, or use "
+            "model_name='dummy_protenix' to run the loop without a folding "
+            "model."
         )
 
     def _collect(

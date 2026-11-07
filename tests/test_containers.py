@@ -23,6 +23,18 @@ def design(path: Path, id: str = "parent") -> Design:
     return Design(id=id, path=path, parent_id=None, producer="test")
 
 
+@pytest.fixture(autouse=True)
+def no_runtime_override(monkeypatch):
+    """Clear DESIGN_PIPELINE_RUNTIME for every test in this module.
+
+    Autouse because it is now the first thing `detect_runtime` reads, so a
+    developer with it exported would otherwise see the detection tests below
+    fail for a reason that has nothing to do with the code. The tests that
+    exercise the variable set it themselves.
+    """
+    monkeypatch.delenv(containers.RUNTIME_VAR, raising=False)
+
+
 @pytest.fixture
 def docker_only(monkeypatch):
     monkeypatch.setattr(
@@ -63,6 +75,41 @@ def test_missing_runtime_says_what_to_install(monkeypatch) -> None:
         detect_runtime()
     message = str(exc.value)
     assert "apptainer" in message and "docker" in message and "dummy" in message
+
+
+def test_the_runtime_variable_overrides_the_preference(both_runtimes, monkeypatch) -> None:
+    """The point of the variable: apptainer used to win silently on a box with
+    both, and docker is usually the one that works there."""
+    monkeypatch.setenv(containers.RUNTIME_VAR, "docker")
+
+    assert detect_runtime() == "docker"
+
+
+def test_the_runtime_variable_is_case_insensitive(both_runtimes, monkeypatch) -> None:
+    monkeypatch.setenv(containers.RUNTIME_VAR, "  Docker  ")
+
+    assert detect_runtime() == "docker"
+
+
+def test_an_unknown_runtime_names_the_two_that_work(both_runtimes, monkeypatch) -> None:
+    monkeypatch.setenv(containers.RUNTIME_VAR, "podman")
+
+    with pytest.raises(MissingRuntimeError) as exc:
+        detect_runtime()
+
+    message = str(exc.value)
+    assert "podman" in message and "apptainer" in message and "docker" in message
+
+
+def test_a_named_runtime_that_is_absent_does_not_fall_back(docker_only, monkeypatch) -> None:
+    """Asking for apptainer and silently getting docker is not a favour: it is a
+    different command line and different mount semantics."""
+    monkeypatch.setenv(containers.RUNTIME_VAR, "apptainer")
+
+    with pytest.raises(MissingRuntimeError) as exc:
+        detect_runtime()
+
+    assert "not on PATH" in str(exc.value)
 
 
 def test_rfdiffusion_fresh_generation(tmp_path, monkeypatch, docker_only) -> None:

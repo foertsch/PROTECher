@@ -4,9 +4,68 @@ What changed in `design_pipeline` and why, newest first. A change that moves a
 default, a scale or a numbering belongs here with the number that moved it; a
 refactor that changes no result does not.
 
+## 2026-11-06
+
+### `DEFAULT_SCORERS` is now `("ablang2",)`
+
+`consensus` is out of the default set. Not because it ranked badly - it was
+never run at all - but because it cannot run: it needs an OAS frequency table
+that `DESIGN_PIPELINE_OAS_TABLE` points at, and that table does not exist and
+never did.
+
+Three independent checks, none of which found it:
+
+| Where it would be | Result |
+|---|---|
+| the repository's history | `git log --all --diff-filter=A --name-only` matches no `oas`/`frequen` path on any branch |
+| the GPU node inventory | absent from both tables in `docs/cluster_gpu_node_rebuild.md`, and `DESIGN_PIPELINE_OAS_TABLE` is not among the variables it records as set |
+| the results | no `consensus` column in `data/track_a_final/ranking.csv` |
+
+So no number in this repository was ever produced with it, and a default that
+raises `MissingDependencyError` on every fresh checkout is not a default. The
+adapter, the route and the registry entry are unchanged: `models=["consensus"]`
+runs exactly as before the moment a table exists, and
+[docs/provisioning.md](docs/provisioning.md) records the four steps to build
+one as an open task.
+
+`ablang2` is the one default left. It installs into Env A, needs no GPU, and
+needs no structure model, which keeps the default campaign that
+`python -m design_pipeline.preflight` gates on inside one environment.
+
+### Nine Env B routes were probed against the wrong interpreter
+
+No result changes. Recorded because it means every preflight table printed
+before today understated what was installed.
+
+`chai`, `chai1`, `boltz`, `boltz2`, `protenix`, `colabfold`, `protein_mpnn`,
+`ligand_mpnn` and `soluble_mpnn` declared `module` or `executable` only, so
+`resolve()` probed them with `importlib.util.find_spec` or `shutil.which`
+against Env A - asking this interpreter about packages that are deliberately
+not in it. The reasoning against doing that was already written in `routes.py`
+for `antifold` and had not been applied to the routes that came from
+`pyproject.toml`.
+
+The concrete effect: `boltz` ran the entire final screen out of `.venv-boltz`
+and preflight in Env A reported `import boltz failed` the whole time. Each
+route now declares the `env_var` its adapter reads, `tests/test_route_drift.py`
+fails CI if a new one does not, and that test also runs its check against a
+reconstruction of the pre-change table so the rule cannot pass vacuously.
+
+`foldx`'s `needs_env` now lists all three variables the adapter reads rather
+than one, so preflight reports `DESIGN_PIPELINE_FOLDX_PDB` - the one with no
+sensible default - when it is unset.
+
+### `DESIGN_PIPELINE_RUNTIME` chooses the container runtime
+
+`detect_runtime()` took the first of apptainer, docker on PATH. That is right on
+a cluster, where apptainer is the only one permitted, and wrong on a workstation
+with both, where apptainer won silently. The variable now overrides it, and a
+runtime it names that is not on PATH is an error rather than a fall back to the
+other one.
+
 ## 2026-10-31
 
-### `DEFAULT_SCORERS` is now `("ablang2", "consensus")`
+### `DEFAULT_SCORERS` was `("ablang2", "consensus")`
 
 `antifold` is out of the default set. Its adapter, `antifold_seq`'s adapter and
 both routes are unchanged: `models=["antifold"]` or `models=["antifold_seq"]`

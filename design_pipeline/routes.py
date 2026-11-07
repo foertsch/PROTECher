@@ -87,9 +87,17 @@ class Route:
     executable: str | None = None
     image: str | None = None
     env_var: str | None = None
-    """The variable that points at this tool's interpreter or binary, for an
-    Env B route. The same variable the adapter reads, so preflight and the run
-    agree about where the tool is."""
+    """The variable that points at this tool's interpreter or binary, for a
+    route reached by path. The same variable the adapter reads, so preflight and
+    the run agree about where the tool is.
+
+    `env` and this answer different questions, which is why a MANUAL route can
+    carry one: `env` says where the tool comes from - a pip environment, a
+    container, a licence-gated download you obtain yourself - and `env_var` says
+    how it is reached. FoldX comes from a licence and is reached by path, so it
+    is MANUAL and has a variable. Anything not in Env A and not bundled needs
+    one, because a tool in another environment cannot be imported into this one;
+    `tests/test_route_drift.py` enforces that."""
     needs_env: tuple[str, ...] = ()
     """Further variables the adapter's command reads. They do not decide
     `resolve`, because a keyword argument can stand in for each, so preflight
@@ -107,6 +115,17 @@ tracked: a tag that moves under a campaign changes the scores without changing
 the config, and the cache key would not notice."""
 
 PLM_EXTRA = "pip install 'design-pipeline[plm]'"
+
+CHAI_IN_PROCESS = (
+    "The one route whose variable is a probe and nothing more. Chai's adapter "
+    "calls run_inference in process - the CLI drops the PAE matrix, which "
+    "pae_interaction needs - so there is no binary to point at and no "
+    "subprocess bridge. Chai has to be driven from inside its own environment; "
+    "DESIGN_PIPELINE_CHAI lets preflight report it from Env A and does not make "
+    "it runnable from there."
+)
+"""Every other Env B route can be reached by path. This one cannot, and saying
+so is better than a variable that looks like the others and is not."""
 
 
 ROUTES: Mapping[str, Route] = {
@@ -205,16 +224,23 @@ ROUTES: Mapping[str, Route] = {
         step=GATE,
         env=ENV_B,
         how=(
-            "git clone https://github.com/Kuhlman-Lab/ThermoMPNN and build its "
-            "environment.yaml with mamba, then point the adapter at that "
-            "environment with executable= or DESIGN_PIPELINE_THERMOMPNN"
+            "git clone https://github.com/Kuhlman-Lab/ThermoMPNN, then install "
+            "it from its own pyproject.toml with uv (`uv sync --extra cu121`, "
+            "or cu124 / cpu) or from environment.yaml with mamba; point the "
+            "adapter at that environment's python with executable= or "
+            "DESIGN_PIPELINE_THERMOMPNN, and at the clone with THERMOMPNN_SRC"
         ),
         verified=True,
-        executable="thermompnn",
         env_var="DESIGN_PIPELINE_THERMOMPNN",
+        needs_env=("THERMOMPNN_SRC",),
         note=(
-            "Its README warns the environment.yaml can resolve a CPU-only "
-            "torch build. Check torch.cuda.is_available() inside Env B."
+            "No console script: its pyproject sets `package = false`, so the "
+            "adapter runs analysis/custom_inference.py out of THERMOMPNN_SRC. "
+            "That script site-saturates one whole chain per call and takes no "
+            "mutation list, so a multi-mutation candidate gets no value. "
+            "environment.yaml can resolve a CPU-only torch build - its README "
+            "warns about this and the uv extras pin the CUDA wheels instead; "
+            "check torch.cuda.is_available() inside Env B either way."
         ),
     ),
     "liabilities": Route(
@@ -250,13 +276,30 @@ ROUTES: Mapping[str, Route] = {
         verified=True,
         note="An official image does exist; see INSTALL.md. Not configured here.",
     ),
+    # MANUAL and yet it carries a variable, which is not a contradiction: `env`
+    # says the tool comes from a licence rather than from pip, `env_var` says it
+    # is reached by path. See Route.env_var.
     "foldx": Route(
         step=SCORE,
         env=MANUAL,
         how="licence-gated: your own FoldX binary. Set FOLDX_BINARY, DESIGN_PIPELINE_FOLDX_PDB and DESIGN_PIPELINE_FOLDX (the Python that runs adapters/_foldx_score.py)",
         verified=True,
         env_var="DESIGN_PIPELINE_FOLDX",
-        needs_env=("FOLDX_BINARY",),
+        # All three, because the adapter reads all three: FOLDX_BINARY and
+        # DESIGN_PIPELINE_FOLDX_PDB in _foldx_score.py, DESIGN_PIPELINE_FOLDX as
+        # the interpreter that runs it. Listing only the first meant preflight
+        # never reported the structure variable as unset, which is the one most
+        # likely to be forgotten - there is no sensible default for it.
+        needs_env=(
+            "FOLDX_BINARY",
+            "DESIGN_PIPELINE_FOLDX_PDB",
+            "DESIGN_PIPELINE_FOLDX",
+        ),
+        note=(
+            "Set DESIGN_PIPELINE_FOLDX_PDB to the trimmed, repaired Fv plus "
+            "antigen. The licensed zip and molecules/ must sit beside the "
+            "binary; provision/foldx.sh checks that."
+        ),
     ),
     "alphafold3": Route(
         step=STRUCTURE,
@@ -302,41 +345,81 @@ ROUTES: Mapping[str, Route] = {
     ),
     # ------------------------------- Pip extras that predate this table. Their
     # routes come from pyproject and were not re-checked on VERIFIED_ON.
+    #
+    # Each carries an `env_var` for the same reason `antifold` does, written out
+    # at the top of its entry: these live in Env B, and `module` or `executable`
+    # alone asks THIS interpreter about a package that is deliberately not in
+    # it, so the answer is always no. Boltz is the worked example - it ran the
+    # whole final screen from `.venv-boltz` and preflight in Env A still said
+    # `import boltz failed`. The variable is asked first; the module or
+    # executable stays as the fallback that lets preflight run inside Env B
+    # itself and still find the tool.
+    #
+    # One variable per environment, not per route, because that is what the
+    # environments actually are: chai and chai1 are one install, boltz and
+    # boltz2 are one, and the three MPNN model types are one `ligandmpnn`.
     "chai": Route(
         step=STRUCTURE, env=ENV_B, how="pip install 'design-pipeline[chai]'",
         module="chai_lab",
+        env_var="DESIGN_PIPELINE_CHAI",
+        note=CHAI_IN_PROCESS,
     ),
     "chai1": Route(
         step=STRUCTURE, env=ENV_B, how="pip install 'design-pipeline[chai]'",
         module="chai_lab",
+        env_var="DESIGN_PIPELINE_CHAI",
+        note=CHAI_IN_PROCESS,
     ),
     "boltz": Route(
         step=STRUCTURE, env=ENV_B, how="pip install 'design-pipeline[boltz]'",
         module="boltz",
+        env_var="DESIGN_PIPELINE_BOLTZ",
+        needs_env=("BOLTZ_CACHE",),
+        note=(
+            "The variable points at that environment's `boltz` binary, which is "
+            "what the adapter shells out to. BOLTZ_CACHE must be absolute and "
+            "is where the 6.3 GB of weights land."
+        ),
     ),
     "boltz2": Route(
         step=STRUCTURE, env=ENV_B, how="pip install 'design-pipeline[boltz]'",
         module="boltz",
+        env_var="DESIGN_PIPELINE_BOLTZ",
+        needs_env=("BOLTZ_CACHE",),
     ),
     "protenix": Route(
         step=STRUCTURE, env=ENV_B, how="pip install 'design-pipeline[protenix]'",
         module="protenix",
+        env_var="DESIGN_PIPELINE_PROTENIX",
+        note=(
+            "Not provisioned: it served de novo design. The route stays because "
+            "the adapter does; provision/manifest.toml is what we build."
+        ),
     ),
     "colabfold": Route(
         step=STRUCTURE, env=ENV_B, how="pip install 'design-pipeline[colabfold]'",
         executable="colabfold_batch",
+        env_var="DESIGN_PIPELINE_COLABFOLD",
     ),
     "protein_mpnn": Route(
         step=DENOVO, env=ENV_B, how="pip install 'design-pipeline[mpnn]'",
         executable="ligandmpnn",
+        env_var="DESIGN_PIPELINE_MPNN",
+        note=(
+            "Not provisioned: de novo design. ligandmpnn 0.1.2 pins "
+            "numpy==1.23.5, torch==2.2.1 and Python <3.12, so it was never "
+            "going to share Env A."
+        ),
     ),
     "ligand_mpnn": Route(
         step=DENOVO, env=ENV_B, how="pip install 'design-pipeline[mpnn]'",
         executable="ligandmpnn",
+        env_var="DESIGN_PIPELINE_MPNN",
     ),
     "soluble_mpnn": Route(
         step=DENOVO, env=ENV_B, how="pip install 'design-pipeline[mpnn]'",
         executable="ligandmpnn",
+        env_var="DESIGN_PIPELINE_MPNN",
     ),
 }
 

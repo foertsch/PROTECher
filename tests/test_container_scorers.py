@@ -189,12 +189,12 @@ def test_a_gate_container_fails_only_on_the_wrong_side_of_its_threshold(
     out.mkdir()
     fake_stream(
         monkeypatch,
-        lambda n: (out / "thermompnn.csv").write_text(
-            "variant_id,ddg\nH:T30Y,2.5\nH:S35A,0.2\n"
+        lambda n: (out / "aggrescan3d.csv").write_text(
+            "variant_id,a3d_score\nH:T30Y,2.5\nH:S35A,0.2\n"
         ),
     )
 
-    produced = check(_gates.thermompnn).run([structure], out, candidates=candidates)
+    produced = check(_gates.aggrescan3d).run([structure], out, candidates=candidates)
     rows = {
         line.split(",")[0]: line.split(",")[1]
         for line in produced[0].path.read_text().splitlines()[1:]
@@ -252,12 +252,12 @@ def test_the_threshold_is_overridable_per_call(
     out.mkdir()
     fake_stream(
         monkeypatch,
-        lambda n: (out / "thermompnn.csv").write_text(
-            "variant_id,ddg\nH:T30Y,2.0\nH:S35A,0.5\n"
+        lambda n: (out / "aggrescan3d.csv").write_text(
+            "variant_id,a3d_score\nH:T30Y,2.0\nH:S35A,0.5\n"
         ),
     )
 
-    strict = check(_gates.thermompnn).run(
+    strict = check(_gates.aggrescan3d).run(
         [structure], out, candidates=candidates, threshold=0.1
     )
 

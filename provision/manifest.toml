@@ -1,0 +1,285 @@
+# The inventory this project provisions.
+#
+# One table per environment: the Python version, the freeze file that measures
+# it, and - where the install is from a git tree rather than from an index - the
+# URL and the commit. Plus the weights nothing here downloads, and the two
+# prerequisites nothing here can satisfy at all.
+#
+# This is what we BUILD. design_pipeline/routes.py is what the code can REACH,
+# and the two differ on purpose: protenix and the MPNN models keep their
+# adapters and routes while no longer being provisioned.
+#
+# Versions are measured, not intended - they come from docs/cluster_freezes/,
+# taken on fgcz-r-023 on 2026-11-02. The scripts install against the
+# `constraint` fields instead, because a constraint survives a version bump.
+
+[meta]
+written = "2026-11-06"
+measured_on = "2026-11-02"
+host = "fgcz-r-023"
+freezes = "docs/cluster_freezes"
+tool = "uv"
+tool_version = "0.11.21"
+note = """The freezes are `uv pip freeze`: each begins with a `Using Python ...
+environment at: ...` banner that pip never emits, and three carry an editable or
+`@ file://` line. Filter with: grep -vE '^(-e|Using)|@ file'"""
+
+
+# --------------------------------------------------------------- required
+
+[env.env_a]
+required = true
+gpu = false
+python = "3.12"
+freeze = "docs/cluster_freezes/freeze_venv.txt"
+script = "provision/env_a.sh"
+install = "editable"
+what = "this package, the tests, the sequence-only scorers, every table and plot"
+constraint = "no torch, no jax: importing design_pipeline must not import a model"
+measured = "Python 3.12.16; biotite 2.0.0, numpy 2.5.4, pandas 3.1.0, scipy 1.18.1, pyarrow 26.0.0, matplotlib 3.11.2, pytest 9.2.0"
+check = "pytest tests -q"
+check_was = "771 passed, 1 skipped on 2026-11-02"
+
+[env.foldx]
+required = true
+gpu = false
+python = "n/a"
+freeze = false
+script = "provision/foldx.sh"
+install = "licensed-zip"
+what = "the physics ddG baseline"
+constraint = "a licensed binary, not a Python package"
+prerequisite = "foldx5_Linux_0.zip"
+binary = "foldx_20261231"
+binary_size = "87 MB"
+layout = "the binary and molecules/ must be siblings"
+env_vars = ["FOLDX_BINARY", "DESIGN_PIPELINE_FOLDX_PDB", "DESIGN_PIPELINE_FOLDX"]
+licence_expiry = "2026-12-31"
+licence_note = """Read from the binary's filename, which is the only place it is
+written. preflight warns inside 30 days. Academic renewal is free and takes a
+few days."""
+
+[env.boltz]
+required = true
+gpu = true
+python = "3.12"
+freeze = "docs/cluster_freezes/freeze_venv-boltz.txt"
+script = "provision/boltz.sh"
+install = "freeze-replay"
+replay_verbatim = true
+what = "Boltz-2. The folds the final ranking's ipSAE and interface metrics come from"
+constraint = "boltz[cuda] brings torch 2.15 and a mixed CUDA 12/13 nvidia-* wheel set"
+measured = "Python 3.12.16; boltz 2.2.1, torch 2.15.0, cuequivariance 0.13.0, numpy 1.26.4, pandas 3.0.6, rdkit 2026.9.1"
+env_vars = ["DESIGN_PIPELINE_BOLTZ", "BOLTZ_CACHE"]
+replay_reason = """The one environment installed from its freeze rather than from
+a constraint. It holds nvidia-cublas==13.4.1.3 and nvidia-cublas-cu12==12.9.2.10
+at once, and the same doubling for nvidia-cuda-nvrtc - almost certainly
+cuequivariance-ops-* pulling cu12 alongside torch 2.15's cu13. A fresh resolve is
+not guaranteed to reproduce that pairing, and this environment's numbers are in
+the final ranking."""
+
+[env.antifold]
+required = true
+gpu = true
+python = "3.13"
+freeze = "docs/cluster_freezes/freeze_antifold.txt"
+script = "provision/antifold.sh"
+install = "git-source"
+what = "AntiFold for the evidence funnel's veto, plus AbLang2 in the same environment"
+constraint = "needs Python >= 3.13, which Env A (3.12) is not"
+measured = "Python 3.13.14; AntiFold 0.4.0+ from source, torch 2.15.0, torch-geometric 2.8.1, biotite 2.0.0, numpy 2.5.4, pandas 3.1.0, ablang2 0.2.1, anarcii 2.0.8"
+env_vars = ["DESIGN_PIPELINE_ANTIFOLD", "ANTIFOLD_SRC"]
+also_installs = ["ablang2==0.2.1"]
+
+[env.antifold.source]
+url = "https://github.com/oxpig/AntiFold"
+commit = "UNKNOWN"
+version_constraint = ">=0.4.0"
+note = """The node's copy had no .git directory, so neither origin nor commit was
+recorded before the scratch was cleared. The existing AntiFold results came from
+an unidentified tree. Recorded as UNKNOWN rather than guessed; provision/antifold.sh
+takes --commit so the next build can be pinned even though the last cannot be
+reproduced."""
+
+[env.antifold.pypi_route]
+# Not what we install. Recorded because it is the constraint that forces the
+# separation in the first place, and because installing it would break the
+# environment we do build.
+used = false
+constraint = "biotite==0.38"
+conflicts_with = "biotite>=2.0"
+note = """Every published PyPI release of AntiFold pins biotite==0.38 against this
+package's biotite>=2.0; pip calls it ResolutionImpossible (verbatim in
+INSTALL.md). The GitHub source at 0.4.0+ drops that pin and installs next to
+biotite 2.0.0, which is what freeze_antifold.txt measures. So biotite==0.38 is
+why a separate environment is needed, and is NOT a pin to apply to it."""
+
+
+# --------------------------------------------------------------- optional
+
+[env.esm_env]
+required = false
+gpu = true
+python = "3.12"
+freeze = "docs/cluster_freezes/freeze_esm_env.txt"
+script = "provision/esm_env.sh"
+install = "index"
+what = "ESM-1v and ESM-IF1 - the scorer calibration, not the screen"
+constraint = "transformers 5.x plus its own torch; Env A has no torch"
+measured = "Python 3.12.16; torch 2.15.0, transformers 5.22.1, huggingface-hub 2.4.0, numpy 2.5.4"
+env_vars = ["HF_HOME", "TORCH_HOME"]
+
+[env.thermompnn]
+required = false
+gpu = true
+python = "3.10"
+freeze = false
+script = "provision/thermompnn.sh"
+install = "git-source"
+what = "the stability gate"
+constraint = "its environment.yaml is Python 3.10 with pytorch-cuda 11.7"
+env_vars = ["DESIGN_PIPELINE_THERMOMPNN"]
+note = """Built from the tree's own environment.yaml with mamba, not from a
+freeze. Its README warns the yaml can resolve a CPU-only torch build: check
+torch.cuda.is_available() inside the environment afterwards."""
+
+[env.thermompnn.source]
+url = "https://github.com/Kuhlman-Lab/ThermoMPNN"
+commit = "UNKNOWN"
+note = """Same as AntiFold: the node's tree had no .git, so origin and commit went
+unrecorded and the existing results came from an unidentified tree. Nothing
+narrows it further than "a tree whose environment.yaml is Python 3.10 with
+pytorch-cuda 11.7"."""
+
+[env.dockq]
+required = false
+gpu = false
+python = "3.12"
+freeze = "docs/cluster_freezes/freeze_dockq.txt"
+script = "provision/dockq.sh"
+install = "index"
+what = "DockQ, for the ground-truth half of design_pipeline.metrics"
+constraint = "brings biopython, which nothing in this package imports"
+measured = "Python 3.12.13; dockq 2.1.3, biopython 1.88, numpy 1.26.4"
+
+[env.chai]
+required = false
+gpu = true
+python = "3.12"
+freeze = "docs/cluster_freezes/freeze_venv-chai.txt"
+script = "provision/chai.sh"
+install = "index"
+what = "Chai-1, as a second opinion against Boltz-2"
+constraint = "chai_lab pins torch 2.6 against boltz's 2.15"
+measured = "Python 3.12.16; chai-lab 0.6.1, torch 2.6.0, numpy 1.26.4, pandas 2.3.3"
+env_vars = ["DESIGN_PIPELINE_CHAI", "CHAI_DOWNLOADS_DIR"]
+in_process = true
+in_process_note = """The only adapter here that does NOT shell out: it calls
+run_inference in process, because the Chai CLI drops the PAE matrix that
+pae_interaction needs. So DESIGN_PIPELINE_CHAI is a preflight probe and nothing
+more - Chai has to be driven from inside this environment, not pointed at from
+Env A."""
+
+
+# ---------------------------------------------------------------- dropped
+
+[dropped.protenix]
+reason = "served de novo design, which this project is not doing"
+freeze = false
+keeps_adapter = true
+keeps_route = true
+env_var = "DESIGN_PIPELINE_PROTENIX"
+
+[dropped.mpnn]
+reason = "served de novo design, which this project is not doing"
+freeze = "docs/cluster_freezes/freeze_mpnn-env.txt"
+keeps_adapter = true
+keeps_route = true
+env_var = "DESIGN_PIPELINE_MPNN"
+measured = "Python 3.11.18; ligandmpnn 0.1.2, torch 2.2.1, numpy 1.23.5, biopython 1.79, prody 2.4.1, scipy 1.12.0"
+note = """The freeze is kept because it is the only record of an environment
+whose pins (numpy==1.23.5, torch==2.2.1, Python <3.12) were never going to share
+Env A. Nothing builds it."""
+
+
+# ---------------------------------------------------------------- weights
+#
+# Nothing in provision/ downloads these. Each tool fetches its own on first use
+# into the location its variable names. Sizes measured on the node.
+
+[[weights]]
+artifact = "boltz2_conf.ckpt, boltz2_aff.ckpt, mols.tar"
+env = "boltz"
+size = "6.3 GB"
+env_var = "BOLTZ_CACHE"
+source = "first `boltz predict`"
+note = "BOLTZ_CACHE must be absolute; the adapter raises on a relative value."
+
+[[weights]]
+artifact = "models_v2/ (trunk, diffusion), traced ESM-2 fp16, conformers_v1.apkl"
+env = "chai"
+size = "6.9 GB"
+env_var = "CHAI_DOWNLOADS_DIR"
+source = "first run_inference"
+
+[[weights]]
+artifact = "model.pt"
+env = "antifold"
+size = "567 MB"
+env_var = "ANTIFOLD_SRC"
+path = "src/models/model.pt"
+source = "downloaded on first use; pass weights= to reuse a download"
+
+[[weights]]
+artifact = "AbLang2 paired weights"
+env = "antifold"
+size = "179 MB"
+env_var = ""
+path = "ablang2/model-weights-ablang2-paired/ inside the venv"
+source = "first use"
+
+[[weights]]
+artifact = "esm_if1_gvp4_t16_142M_UR50.pt"
+env = "esm_env"
+size = "142 M parameters"
+env_var = "TORCH_HOME"
+source = "torch.hub"
+
+[[weights]]
+artifact = "facebook/esm1v_t33_650M_UR90S_1"
+env = "esm_env"
+size = "650 M parameters"
+env_var = "HF_HOME"
+source = "Hugging Face"
+
+
+# ---------------------------------------------------------- prerequisites
+#
+# Neither can be fetched by any script here.
+
+[[prerequisite]]
+name = "FoldX licensed download"
+artifact = "foldx5_Linux_0.zip"
+state = "held"
+where = "~/tools/foldx/ on the cluster's shared home"
+survives_scratch_clear = true
+blocks = ["foldx"]
+note = """Home is the only path shared across nodes, which is why this survived
+the node's scratch being cleared. The directory also holds the unpacked
+foldx_20261231 binary and molecules/; copy it as a unit, since FoldX reads its
+rotamer data from molecules/ by relative path."""
+
+[[prerequisite]]
+name = "OAS frequency table"
+artifact = "imgt,aa,frequency CSV"
+state = "never built"
+where = ""
+survives_scratch_clear = false
+blocks = ["consensus"]
+env_var = "DESIGN_PIPELINE_OAS_TABLE"
+note = """Does not exist and never did: no such file in the repository's history
+(git log --all --diff-filter=A matches nothing), absent from the node inventory,
+DESIGN_PIPELINE_OAS_TABLE not among the variables the rebuild doc records as set,
+and `consensus` in no result table. `consensus` was removed from DEFAULT_SCORERS
+on 2026-11-06 for that reason. Building it is an open task; docs/provisioning.md
+has the four steps and the file format."""

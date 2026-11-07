@@ -11,6 +11,7 @@ ten image names, eight of which did not exist; see `routes.py`.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -32,17 +33,48 @@ Collect = Callable[[Path, Path], list[tuple[Path, dict[str, float]]]]
 its own output format, and split one file into several designs."""
 
 
+RUNTIME_VAR = "DESIGN_PIPELINE_RUNTIME"
+RUNTIMES: tuple[Runtime, ...] = ("apptainer", "docker")
+"""In preference order. Apptainer first because on a shared cluster it is the
+one we are allowed to use."""
+
+
 def detect_runtime() -> Runtime:
-    """Prefer apptainer: on shared clusters it is the one we are allowed to use."""
-    for runtime in ("apptainer", "docker"):
+    """Which container runtime to use. `DESIGN_PIPELINE_RUNTIME` decides.
+
+    The default order prefers apptainer, which is right on a cluster and wrong
+    on a workstation that has both installed: there, docker is usually the one
+    that works and apptainer used to win silently. So the variable is honoured
+    first, and a runtime it names that is not on PATH is an error rather than a
+    fall back to the other one - asking for docker and getting apptainer is not
+    a favour, it is a different command line and different mount semantics.
+    """
+    named = os.environ.get(RUNTIME_VAR, "").strip().lower()
+    if named:
+        if named not in RUNTIMES:
+            raise MissingRuntimeError(
+                f"${RUNTIME_VAR}={named!r} is not a container runtime this "
+                f"package drives. Set it to one of {', '.join(RUNTIMES)}, or "
+                f"unset it to take whichever is on PATH."
+            )
+        found = shutil.which(named)
+        if found is None:
+            raise MissingRuntimeError(
+                f"${RUNTIME_VAR} asks for {named}, which is not on PATH. "
+                f"Install it, or unset {RUNTIME_VAR} to take whichever "
+                f"runtime is available."
+            )
+        return named  # type: ignore[return-value]
+    for runtime in RUNTIMES:
         if shutil.which(runtime):
-            return runtime  # type: ignore[return-value]
+            return runtime
     raise MissingRuntimeError(
         "No container runtime found on PATH. design_pipeline needs either apptainer "
         "(preferred: https://apptainer.org/docs/admin/main/installation.html) "
         "or docker (https://docs.docker.com/get-docker/). On a cluster, try "
-        "`module load apptainer`. To develop without one, use the dummy "
-        "models (model_name='dummy_backbones' and friends)."
+        "`module load apptainer`. Set "
+        f"${RUNTIME_VAR} to choose when both are present. To develop without "
+        "one, use the dummy models (model_name='dummy_backbones' and friends)."
     )
 
 

@@ -1,5 +1,9 @@
 # data and model files stay local
 !data/.gitkeep
+
+# licence-gated and provisioned tools: provision/*.sh unpack and build here.
+# FoldX in particular must never be committed - the binary is licensed per user.
+tools/
 *.ckpt
 *.pt
 *.safetensors
