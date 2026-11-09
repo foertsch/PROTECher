@@ -35,7 +35,7 @@ Everything below lives under `/scratch/foertsch/` unless it says `~`.
 | `protecher/runs/` | 612 MB | earlier pipeline runs and smoke tests |
 | `protecher_track_a_run`, `protecher_loop_arm` | 141 MB, 168 MB | evidence-funnel run output; the exploratory RFdiffusion loop arm |
 | `protecher_pr23_foldx_results`, `protecher_foldx_calib`, `protecher_results`, `esm1v_scan` | under 3 MB each | FoldX run, calibration and ESM-1v scan tables |
-| `protecher_tools/ipsae/` | 0.1 MB + `work/` | `ipsae.py` (Dunbrack **v4**) and `ipsae_reference_results.csv`, the reference values the in-process scorer was checked against on 30 Boltz-2 complexes. `design_pipeline/ipsae.py` in the repo is v3 |
+| `protecher_tools/ipsae/` | 0.1 MB + `work/` | `ipsae.py` (Dunbrack **v4**) and `ipsae_reference_results.csv`, the reference values the in-process scorer was checked against on 30 Boltz-2 complexes. This is the only copy of the script kept anywhere; the repository holds none |
 | `protecher_cache/msa_candidates/trastuzumab_her2/variants/` | part of 548 MB | per-variant alignments derived from the parent's; regenerable by `msa_cache` |
 
 Not worth keeping: `protecher_tools/uv-cache` (28 GB), `apptainer/cache` (15 GB), `~60` small per-job `protecher_*` dirs of 1 to 12 MB (each is a copy of the repo tree plus a log), `protecher_cache/_*_test` dirs, `.cache/pip`, `.cache/pixi`.

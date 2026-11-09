@@ -20,6 +20,7 @@ python examples/track_a_screen.py fold --fasta candidates.fasta --subset 0-39 --
 python examples/track_a_chem_rank.py score --root screen/fold_a --out rows_a.csv --workers 8
 python examples/track_a_chem_rank.py rank --rows data/track_a_final/rows_*.csv --candidates data/track_a_final/candidates.csv --out ranking.csv --chem-weight 0.15
 python examples/track_a_final_pick.py --rows data/track_a_final/rows_*.csv --candidates data/track_a_final/candidates.csv --out final15.csv
+python examples/track_a_chem_rank.py audit --ranking data/track_a_final/ranking.csv
 ```
 
 The last command reproduces `data/track_a_final/final15.csv` from the committed rows files.
@@ -36,13 +37,50 @@ The parent was folded in every batch and every candidate is scored against the p
 
 ipSAE is `design_pipeline.scoring.ipsae`, which follows Dunbrack's `ipsae.py` v4 (d0 per aligned residue, `d0 = max(1, 1.24 (max(n, 26) - 15)^(1/3) - 1.8)`, PAE cutoff 15 Å). It reproduces the script's value within 5e-7 on 30 Boltz-2 complexes of the scFv and HER2. Only the PAE cutoff matters for the number; the distance cutoff of the script only changes the counts it reports. `ipsae_ab` aligns on the scFv and scores the antigen, `ipsae_ba` the reverse, `ipsae_max` and `ipsae_min` are the larger and smaller; the ranking uses `max`.
 
-`design_pipeline/ipsae.py` (PR 22) is the vendored v3 script. It cannot be imported as a function and its d0 floor is 1.04, not 1.0, so the in-process scorer was written next to it and checked against it. A submission scored by the organisers may use another variant (direction, d0, cutoff); that is not known.
+The reference the scorer is checked against lives on the GPU node, not in this repository: `protecher_tools/ipsae/` carries the **v4** script and `ipsae_reference_results.csv`, the 30 complexes ([cluster_gpu_node_rebuild.md](cluster_gpu_node_rebuild.md)). To re-run the comparison by hand there, copy one fold's PAE and structure into an empty folder (the script writes its output table beside its inputs) and run:
+
+```
+python protecher_tools/ipsae/ipsae.py pae_<name>_model_0.npz <name>_model_0.cif 15 10
+```
+
+Three things were dropped from the repository once nothing used them, and all three are in git history:
+
+| Dropped | What it was | Where it is |
+|---|---|---|
+| `vendor/ipsae_v3.py` (2026-11-09) | a verbatim copy of the **v3** script, which floors d0 at 1.04 rather than 1.0 and cannot be imported as a function - a command-line script only, which is why the in-process scorer was written separately | `git show 1fb9362:design_pipeline/ipsae.py` (it was added as `design_pipeline/ipsae.py`; the commit subject calls it v4, the file header says version 3, and the 1.04 floor agrees with the header) |
+| `design_pipeline/ipsae_score.py` (2026-11-08) | a subprocess wrapper that ran the script and parsed its output table | `git show 1fb9362:design_pipeline/ipsae_score.py` |
+| `design_pipeline/rank_ipsae.py` (2026-11-08) | a min-direction ranking layer, superseded by `track_a_chem_rank.py` | `git show 1fb9362:design_pipeline/rank_ipsae.py` |
+
+Nothing imported, called or tested any of them; the only references were in these docs. If the organisers' script ever needs parsing, recover the wrapper from history rather than writing it again. A submission scored by the organisers may use another variant (direction, d0, cutoff); that is not known.
 
 Chemistry is `charge_contact_report` (PR 24), computed per fold against the parent's fold of the same seed: `contact` is the salt-bridge ramp summed over the added cationic substitutions, `coulomb` the parent's minus the design's screened electrostatic energy of the mutated charge sites against the antigen (larger is more favourable). Both are averaged only over the seeds whose pose keeps the parent's epitope (`eligible`). A candidate's chemistry is `chem_z = z(contact) + z(coulomb)` over the candidates that have an on-site seed, and 0 for one that has none. The motivation is a judge's remark that the epitope is rich in Asp and Glu; the spec is [chem_score_spec.md](chem_score_spec.md).
 
 ## Ranking and the pick
 
 `rank_weighted` ranks by `score = z(ipSAE max, mean over seeds) + 0.15 * chem_z`. The weight is deliberately small: chemistry reorders near ties and cannot make up a large ipSAE gap. `rank` also reports `in_band` against the parent's mean minus one SD; the pick uses two.
+
+### What the score is made of, and what it is not
+
+The score has exactly three independent inputs, named as `SCORE_INPUTS` in `track_a_chem_rank.py` beside the formula:
+
+| Column | In the score | Nominal weight |
+|---|---|---|
+| `ipsae_max` | yes, as `z(ipsae_max)` | 1.0 |
+| `contact` | yes, inside `chem_z` | 0.15 |
+| `coulomb` | yes, inside `chem_z` | 0.15 |
+| `ipsae_min`, `iptm`, `in_band`, `n_on_site`, `para_net`, `chem` | no | 0 |
+
+So the composite is `1 * z(ipsae_max) + 0.15 * z(contact) + 0.15 * z(coulomb)` and nothing else. The columns in the lower row are written to `ranking.csv` and `final15.csv` to be read, not scored: `chem` is the band-rule chemistry of `rank_rows` and only `chem_z` reaches the number, `in_band` is a flag derived from `ipsae_max`, and `iptm`, `n_on_site` and `para_net` are context.
+
+**`ipsae_min` is excluded deliberately** (recorded 2026-11-09). It is close to a fixed multiple of `ipsae_max` - about `0.79 * ipsae_max`, leaving a residual SD of 0.023 against the column's own SD of 0.241, so roughly 99% of it is already in `ipsae_max`, and the two order the candidates alike (Spearman about 0.995). Scoring both would have put weight 2 on one co-folding signal against 0.15 each on the two physics terms. It stays as a column, since the same fold yields it for free and it is worth seeing when the two directions disagree, but it must not enter `score`. `tests/test_track_a_chem_rank.py::test_ipsae_min_is_reported_but_never_enters_the_score` perturbs the column and asserts the scores do not move.
+
+A pair of score inputs that measure the same thing is the same bug, so the check is permanent rather than a one-off reading:
+
+- `check_score_correlations(records, threshold=0.9)` computes Pearson r and Spearman rho over `SCORE_INPUTS`, pairwise-complete, and warns on stderr for every pair that reaches 0.9 in either. `rank` calls it on every ranking it writes, so a redundant column cannot be added silently; `--correlation-limit` moves the threshold.
+- `python examples/track_a_chem_rank.py audit --ranking ranking.csv` prints both correlation matrices over `AUDIT_COLUMNS` (the three score inputs plus every reported column), the flagged pairs, and each input's share of the score's variance - which is what a nominal weight is actually worth once the inputs correlate. `--drop <column>` prints the shares with a column removed.
+- `notebooks/06_score_correlation_audit.ipynb` is the same functions with the `ipsae_min` regression above, the pair-by-pair table, and a re-ranking of the committed `ranking.csv` under each candidate drop, to see whether a drop would move the picks.
+
+The audit over all of `AUDIT_COLUMNS` is expected to flag pairs that are arithmetic rather than findings: `chem` and `chem_z` are the same `z(contact) + z(coulomb)` over different populations (`chem` over the in-band on-site candidates, `chem_z` over all on-site ones with 0 for a candidate with no on-site seed), and `in_band` is a threshold on `ipsae_max`. Only a flagged pair whose two members are both in `SCORE_INPUTS` is a double-weighting.
 
 `track_a_final_pick.py` takes the first 10 by score, then 5 more by `chem_z` from the candidates whose mean ipSAE is at least the parent's mean minus 2 SD and which differ from every earlier pick by at least two substitutions. The parent's ipSAE (max) over its 12 folds is 0.755 with SD 0.091, so the floor is 0.573.
 

@@ -6,11 +6,21 @@ and seed. A batch is one `boltz_results_inputs` folder; its seed is the `seed<k>
 
     python examples/track_a_chem_rank.py score --root screen/modal_s1 --out rows_modal_s1.csv --workers 8
     python examples/track_a_chem_rank.py rank --rows rows_*.csv --candidates candidates.csv --out ranking.csv
+    python examples/track_a_chem_rank.py audit --ranking ranking.csv
 
 `score` is the CPU-heavy part and runs one process per fold. `rank` follows docs/chem_score_spec.md: candidates whose mean
 ipSAE (max direction) is at least the parent's mean minus two SD are ranked by chem = z(contact) + z(coulomb), over the seeds
 whose pose passes the epitope filter; the rest follow, ordered by ipSAE. A candidate with no on-site seed has no chem score
 and is ranked by ipSAE. Nothing is vetoed.
+
+With `--chem-weight W`, `rank` instead gives every candidate the one number the pick uses:
+
+    score = z(ipsae_max) + W * chem_z,   chem_z = z(contact) + z(coulomb)
+
+and nothing else. The other columns of ranking.csv - ipsae_min, iptm, in_band, n_on_site, para_net, chem - are reported and
+do not enter the score; `ipsae_min` in particular is kept as a column and deliberately left out of the number, because it is
+very nearly a multiple of `ipsae_max` and would weight the co-folding signal twice. `SCORE_INPUTS` names the three columns
+the score does depend on, `audit` prints their correlation matrix, and `rank` warns on any pair that reaches 0.9.
 """
 
 from __future__ import annotations
@@ -153,6 +163,209 @@ def rank_weighted(rows: list[dict], chem_weight: float, band_sd: float = 1.0) ->
     return ranked, band
 
 
+# ------------------------------------------------------------------ what feeds the score, and the correlation audit
+# `rank_weighted` is the whole score:   score = z(ipsae_max) + chem_weight * chem_z,   chem_z = z(contact) + z(coulomb)
+# so these three columns are its only independent inputs. Everything else ranking.csv carries is reported, never scored:
+# ipsae_min, iptm, in_band, n_on_site, para_net and chem do not enter the number. ipsae_min is excluded deliberately - it is
+# about 0.79 * ipsae_max with little left over, so adding it would weight the co-folding signal twice against the chemistry
+# terms. Keep this tuple beside the formula: the audit below reads it, so a column that joins the score without joining this
+# tuple is a column that stops being checked.
+SCORE_INPUTS = ("ipsae_max", "contact", "coulomb")
+
+# Every per-candidate column worth auditing, the score's inputs first. `chem` and `chem_z` are the same formula over
+# different populations (`chem` over the in-band on-site candidates, `chem_z` over all on-site ones and 0 for a candidate
+# with none), so a near-1 correlation between those two is expected and is not evidence that either belongs in the score.
+AUDIT_COLUMNS = ("ipsae_max", "contact", "coulomb", "chem_z", "chem", "ipsae_min", "iptm", "in_band", "n_on_site", "para_net")
+DERIVED_FROM = {"chem": ("contact", "coulomb"), "chem_z": ("contact", "coulomb"), "in_band": ("ipsae_max",),
+                "score": ("ipsae_max", "contact", "coulomb", "chem_z")}
+CORRELATION_LIMIT = 0.9
+
+
+def score_weights(chem_weight: float = 0.15) -> dict[str, float]:
+    """The nominal weight each score input carries on its own z-scale. chem_z = z(contact) + z(coulomb), so each chemistry
+    term carries the full `chem_weight`, not half of it."""
+    return {"ipsae_max": 1.0, "contact": chem_weight, "coulomb": chem_weight}
+
+
+def _numeric(value) -> float:
+    """A column's value as a float. Bools and their CSV spellings count as 1 and 0; anything unparsable is nan."""
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if text.lower() in ("true", "false"):
+            return 1.0 if text.lower() == "true" else 0.0
+        try:
+            return float(text)
+        except ValueError:
+            return math.nan
+    return math.nan
+
+
+def _both(records: Sequence[dict], a: str, b: str) -> list[tuple[float, float]]:
+    """The rows where both columns are numbers. Pairwise-complete, so a candidate with no chemistry still counts towards
+    the pairs that do not involve a chemistry column."""
+    out = []
+    for r in records:
+        x, y = _numeric(r.get(a)), _numeric(r.get(b))
+        if not (math.isnan(x) or math.isnan(y)):
+            out.append((x, y))
+    return out
+
+
+def pearson(points: Sequence[tuple[float, float]]) -> float:
+    """Pearson r, or nan for fewer than three points or a column that does not vary."""
+    if len(points) < 3:
+        return math.nan
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    mx, my = statistics.mean(xs), statistics.mean(ys)
+    sxx, syy = sum((x - mx) ** 2 for x in xs), sum((y - my) ** 2 for y in ys)
+    if sxx <= 0.0 or syy <= 0.0:
+        return math.nan
+    return sum((x - mx) * (y - my) for x, y in points) / math.sqrt(sxx * syy)
+
+
+def _ranks(values: Sequence[float]) -> list[float]:
+    """1-based ranks, ties sharing their mean rank."""
+    order = sorted(range(len(values)), key=lambda i: values[i])
+    out = [0.0] * len(values)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and values[order[j + 1]] == values[order[i]]:
+            j += 1
+        shared = (i + j) / 2.0 + 1.0
+        for k in range(i, j + 1):
+            out[order[k]] = shared
+        i = j + 1
+    return out
+
+
+def spearman(points: Sequence[tuple[float, float]]) -> float:
+    """Spearman rho: Pearson r of the ranks. This is the number that says whether two columns order the candidates alike."""
+    if len(points) < 3:
+        return math.nan
+    return pearson(list(zip(_ranks([p[0] for p in points]), _ranks([p[1] for p in points]))))
+
+
+def correlation_matrix(records: Sequence[dict], columns: Sequence[str] = SCORE_INPUTS,
+                       method: str = "pearson") -> dict[tuple[str, str], float]:
+    """{(a, b): r} for every pair of `columns`, each pair in `columns` order, over the rows where both are numbers.
+
+    `method` is "pearson" or "spearman". A value is nan where a column is constant, absent, or the pair has fewer than
+    three usable rows. `records` are the dicts `rank_weighted`/`rank_rows` return or the rows of ranking.csv."""
+    correlate = spearman if method == "spearman" else pearson
+    present = [c for c in columns if any(not math.isnan(_numeric(r.get(c))) for r in records)]
+    return {(a, b): correlate(_both(records, a, b)) for i, a in enumerate(present) for b in present[i + 1:]}
+
+
+def check_score_correlations(records: Sequence[dict], threshold: float = CORRELATION_LIMIT,
+                             columns: Sequence[str] = SCORE_INPUTS, stream=None) -> list[str]:
+    """Warn on every pair of score inputs that reaches `threshold` in |r| or |rho|.
+
+    Such a pair is one quantity entering `score` twice, which silently doubles its weight against the other terms - the
+    bug that kept ipsae_min out of the score. Returns the warning lines, empty when the inputs are clean, and writes them
+    to `stream` (stderr by default). `rank` calls this on every run so a redundant column cannot reappear unnoticed."""
+    pear = correlation_matrix(records, columns, "pearson")
+    spear = correlation_matrix(records, columns, "spearman")
+    lines = []
+    for pair in sorted(pear, key=lambda p: -max(abs(v) for v in (pear[p], spear.get(p, math.nan), 0.0) if not math.isnan(v))):
+        a, b = pair
+        r, rho = pear[pair], spear.get(pair, math.nan)
+        worst = max((abs(v) for v in (r, rho) if not math.isnan(v)), default=math.nan)
+        if math.isnan(worst) or worst < threshold:
+            continue
+        parents = DERIVED_FROM.get(b, ()) + DERIVED_FROM.get(a, ())
+        why = "  (expected: one is built from the other)" if a in parents or b in parents else ""
+        lines.append(f"{a} and {b}: r {r:+.3f}, rho {rho:+.3f} over {len(_both(records, a, b))} candidates{why}")
+    if lines:
+        out = sys.stderr if stream is None else stream
+        what = "score inputs" if tuple(columns) == SCORE_INPUTS else "audited columns"
+        tail = ("one of each pair is weighting the same signal twice. Drop one, or say in docs/track_a_final_pipeline.md "
+                "why both stay:") if what == "score inputs" else ("a pair is a double-weighting only where both members "
+                "are score inputs; see docs/track_a_final_pipeline.md:")
+        print(f"warning: {len(lines)} pair(s) of {what} at or above |r| {threshold:.2f}; {tail}", file=out)
+        for line in lines:
+            print(f"  {line}", file=out)
+    return lines
+
+
+def effective_weights(records: Sequence[dict], chem_weight: float = 0.15, columns: Sequence[str] = SCORE_INPUTS,
+                      drop: Sequence[str] = ()) -> dict[str, float]:
+    """Each input's share of the score's variance, which is what its nominal weight is really worth once the inputs
+    correlate: score = sum_i w_i z_i, so Var = sum_ij w_i w_j r_ij and input i carries w_i * sum_j w_j r_ij / Var.
+    Pass `drop` to see the shares after removing a column. The shares sum to 1; a missing pair counts as r = 0."""
+    cols = [c for c in columns if c not in drop]
+    nominal = score_weights(chem_weight)
+    w = {c: nominal.get(c, 1.0) for c in cols}
+    r = {}
+    for i, a in enumerate(cols):
+        r[(a, a)] = 1.0
+        for b in cols[i + 1:]:
+            value = pearson(_both(records, a, b))
+            r[(a, b)] = r[(b, a)] = 0.0 if math.isnan(value) else value
+    total = sum(w[a] * w[b] * r[(a, b)] for a in cols for b in cols)
+    if total <= 0.0:
+        return {c: math.nan for c in cols}
+    return {a: w[a] * sum(w[b] * r[(a, b)] for b in cols) / total for a in cols}
+
+
+def format_correlation_matrix(records: Sequence[dict], columns: Sequence[str] = AUDIT_COLUMNS, method: str = "pearson",
+                              threshold: float = CORRELATION_LIMIT) -> str:
+    """The square matrix as text, with a `*` on every off-diagonal cell at or above `threshold` and `.` for nan."""
+    matrix = correlation_matrix(records, columns, method)
+    present = sorted({c for pair in matrix for c in pair}, key=lambda c: list(columns).index(c))
+    width = max((len(c) for c in present), default=0)
+    head = " " * (width + 1) + "".join(f"{c[:8]:>9}" for c in present)
+    lines = [head]
+    for a in present:
+        cells = []
+        for b in present:
+            if a == b:
+                cells.append(f"{'1.000':>9}")
+                continue
+            value = matrix.get((a, b), matrix.get((b, a), math.nan))
+            if math.isnan(value):
+                cells.append(f"{'.':>9}")
+            else:
+                cells.append(f"{value:+8.3f}{'*' if abs(value) >= threshold else ' '}")
+        lines.append(f"{a:<{width}} " + "".join(cells))
+    return "\n".join(lines)
+
+
+def audit(args: argparse.Namespace) -> int:
+    """Print the correlation matrix over the audited columns of a ranking.csv and flag the redundant pairs."""
+    records = []
+    for pattern in args.ranking:
+        for path in sorted(glob.glob(pattern)):
+            with open(path, newline="") as handle:
+                records += list(csv.DictReader(handle))
+    columns = list(args.columns) if args.columns else list(AUDIT_COLUMNS)
+    print(f"{len(records)} candidates from {', '.join(args.ranking)}")
+    print(f"score = z(ipsae_max) + {args.chem_weight} * chem_z, chem_z = z(contact) + z(coulomb); score inputs "
+          f"{', '.join(SCORE_INPUTS)}\n")
+    for method in ("pearson", "spearman"):
+        print(f"{method} over {len(columns)} columns ('*' at or above |{args.threshold:.2f}|, '.' not comparable):")
+        print(format_correlation_matrix(records, columns, method, args.threshold), end="\n\n")
+    flagged = check_score_correlations(records, args.threshold, columns, stream=sys.stdout)
+    if not flagged:
+        print(f"no pair at or above |r| {args.threshold:.2f}")
+    print("\nshare of the score's variance per input:")
+    before = effective_weights(records, args.chem_weight)
+    for name, share in before.items():
+        print(f"  {name:<12}{share:7.1%}  (nominal weight {score_weights(args.chem_weight)[name]:g})")
+    for column in args.drop or ():
+        if column in SCORE_INPUTS:
+            print(f"\nwithout {column}:")
+            for name, share in effective_weights(records, args.chem_weight, drop=(column,)).items():
+                print(f"  {name:<12}{share:7.1%}")
+        else:
+            print(f"\n{column} is not a score input ({', '.join(SCORE_INPUTS)}); dropping it changes no weight")
+    return 0
+
+
 def rank(args: argparse.Namespace) -> int:
     rows = []
     for pattern in args.rows:
@@ -164,6 +377,7 @@ def rank(args: argparse.Namespace) -> int:
         with open(args.candidates, newline="") as handle:
             meta = {r["name"]: r for r in csv.DictReader(handle)}
     ranked, band = rank_weighted(rows, args.chem_weight) if args.chem_weight is not None else rank_rows(rows)
+    check_score_correlations(ranked, args.correlation_limit)      # a score input that duplicates another must not pass quietly
     print(f"parent ipSAE (max) {band['parent_mean']:.3f}, SD {band['parent_sd']:.3f} over {band['parent_folds']} folds; band floor {band['floor']:.3f}")
     print(f"{len(ranked)} candidates; in band {sum(o['in_band'] for o in ranked)}; chem-scored {sum(not math.isnan(o['chem']) for o in ranked)}")
     fields = ["rank", "name", "source", "variant_id", "seeds", "ipsae_max", "ipsae_min", "iptm", "in_band", "n_on_site", "contact", "coulomb", "para_net", "chem", "chem_z", "score"]
@@ -195,7 +409,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     r.add_argument("--out", required=True)
     r.add_argument("--top", type=int, default=25)
     r.add_argument("--chem-weight", type=float, help="rank by z(ipSAE) + W * chemistry over all candidates instead of the band rule (0.15 keeps chemistry in at a small weight)")
+    r.add_argument("--correlation-limit", type=float, default=CORRELATION_LIMIT,
+                   help=f"warn when two score inputs correlate at or above this (default {CORRELATION_LIMIT})")
     r.set_defaults(run=rank)
+    a = sub.add_parser("audit", help="correlation matrix over the audited columns of a ranking.csv, and the redundant pairs")
+    a.add_argument("--ranking", nargs="+", required=True, help="ranking.csv from `rank` (globs allowed)")
+    a.add_argument("--columns", nargs="+", help=f"columns to audit (default: {' '.join(AUDIT_COLUMNS)})")
+    a.add_argument("--drop", nargs="+", help="also report the weights with these columns removed")
+    a.add_argument("--chem-weight", type=float, default=0.15, help="the weight the ranking was made with (default 0.15)")
+    a.add_argument("--threshold", type=float, default=CORRELATION_LIMIT, help=f"flag pairs at or above this (default {CORRELATION_LIMIT})")
+    a.set_defaults(run=audit)
     args = parser.parse_args(argv)
     return args.run(args)
 
