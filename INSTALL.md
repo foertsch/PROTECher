@@ -51,6 +51,11 @@ What you just installed:
 | `[numbering]` | `anarci`, for the `imgt` column |
 
 No torch, no jax, nothing CUDA. Importing `design_pipeline` imports no model.
+That last sentence stays true once `[plm]` is installed too — the model imports
+are inside the adapters that need them — and `[plm]` is what the default scorer
+needs, so the `core` that `provision/core.sh` builds includes it with a CPU
+torch. On a laptop you can leave it out; `ablang2` is then the one row
+`preflight` reports unresolved.
 The container adapters — every scorer, every gate check, RFdiffusion — add
 **no** Python dependency at all. The model extras `[mpnn]` and `[colabfold]`
 are heavy and are covered in section 4; install them only if you intend to run
@@ -61,23 +66,27 @@ column is empty and a warning says so once; nothing else changes, because every
 join in this package is on chain positions. IMGT labels matter when you want a
 result to carry across antibodies.
 
-### Two environments and one container
+### Where each model goes
 
-Models do not all fit together, so they do not all go in one place. There are
-three places, and `design_pipeline/routes.py` is the machine-readable version
-of this table — the errors and `preflight` both read it.
+Models do not all fit together, so they do not all go in one place.
+`design_pipeline/routes.py` is the machine-readable version of this table — the
+errors and `preflight` both read it — and `provision/manifest.toml` is the
+machine-readable version of the environments themselves.
 
 | | holds | why |
 |---|---|---|
-| **Env A** | this package, `ablang2`, `antiberty`, `transformers` + `torch`, `fair-esm`, `anarci` | the sequence-only scorers and the whole table/gating path. Build and test this first. |
+| **`core`** | this package, `ablang2`, `antiberty`, `transformers` + `torch`, `fair-esm`, `anarci` | the sequence-only scorers and the whole table/gating path. Build and test this first. |
 | **Env B** | `antifold`, `thermompnn`, and the co-folding models (`chai`, `boltz`, `protenix`, `colabfold`) | each pins torch against the others, and AntiFold pins `biotite==0.38` |
 | **container** | `gearbind` | TorchDrug pins Python ≤3.10 and an old torch: the one conflict a second environment cannot fix |
 | **container** | `rfdiffusion` | it already had a published image; pinned by digest |
 
-"Env B" is one label for several possible environments. Each of its models is
-reached by its own path, so whether AntiFold and ThermoMPNN actually share one
-environment is a question for the dry run — their pins may force two.
-Nothing in the code assumes either way; that is what `executable=` is for.
+"Env B" is one label for several environments, and the dry run has since settled
+how many. Their pins forced five, each with its own script and its own key in
+[provision/manifest.toml](provision/manifest.toml): `antifold` (Python 3.13),
+`thermompnn` (3.10), `boltz`, `chai` and `esm_env`. AntiFold and ThermoMPNN do
+not share one. Nothing in the code assumes a grouping either way — each model is
+reached by its own path, which is what `executable=` is for — so the split cost
+nothing but disk.
 
 Adapters in another environment are reached by path, not by import — the
 pipeline shells out:
@@ -108,7 +117,7 @@ and takes no mutation list, so the adapter runs it once per chain the
 candidates touch and joins the result back on; a multi-mutation candidate gets
 no value and therefore passes the gate unmeasured.
 
-#### AntiFold cannot go in Env A
+#### AntiFold cannot go in `core`
 
 `pip install antifold` pins `torch==2.3.1`, `torch-geometric==2.4.0`,
 `biotite==0.38`, `biopython==1.83` and `numpy==1.26.*`. This package needs
@@ -137,7 +146,7 @@ are `biotite>=1.0`, `numpy>=1.26`, `torch>=2.3` and `pandas>=2.0`. On 2026-10-30
 it installed from a clone into a Python 3.13 environment next to biotite 2.0.0,
 numpy 2.5.4 and pandas 3.1.0, and ran on 1N8Z; `python -m
 design_pipeline.preflight` run inside that environment reported the default
-campaign resolved. So where Env A can be Python 3.13, AntiFold may not need an
+campaign resolved. So where `core` can be Python 3.13, AntiFold may not need an
 environment of its own. That is one environment on one machine, checked with
 the preflight and not through a full campaign.
 
@@ -162,7 +171,7 @@ cap it with `max_variants=`.
 #### ESM-IF, resolved empirically
 
 Two separate questions, two different answers. The pure-Python part resolves
-into Env A with no conflict:
+into `core` with no conflict:
 
 ```
 $ pip install --dry-run "biotite>=2.0" fair-esm torch-geometric
@@ -231,8 +240,9 @@ the environment, not the code.
 
 ## 3. Container runtime (for RFdiffusion and GearBind only)
 
-Two adapters use a container. Everything else installs into Env A, B or C,
-so you can skip this section entirely for a scoring-and-gating campaign.
+Two adapters use a container. Everything else installs into `core` or one of the
+per-model environments in [provision/manifest.toml](provision/manifest.toml), so
+you can skip this section entirely for a scoring-and-gating campaign.
 
 You need **either** apptainer or docker. The adapter detects which is present
 and prefers apptainer, because that is the one shared clusters allow.
@@ -433,10 +443,10 @@ What each one actually needs, and whether we have checked it:
 | adapter | where | route | checked |
 |---|---|---|---|
 | `antifold` | Env B | `pip install antifold` (PyPI 0.3.1, BSD-3; weights download on first run) | yes |
-| `esm_if` | Env A | `pip install fair-esm` + `torch-geometric` + `torch-scatter` — but no CLI exists to invoke | route yes, invocation no |
-| `ablang2` | Env A | `pip install ablang2` | yes |
-| `esm1v`, `esm2_650m` | Env A | `pip install 'design-pipeline[plm]'` | yes |
-| `antiberty` | Env A | `pip install antiberty` | no |
+| `esm_if` | `core` | `pip install fair-esm` + `torch-geometric` + `torch-scatter` — but no CLI exists to invoke | route yes, invocation no |
+| `ablang2` | `core` | `pip install ablang2` | yes |
+| `esm1v`, `esm2_650m` | `core` | `pip install 'design-pipeline[plm]'` | yes |
+| `antiberty` | `core` | `pip install antiberty` | no |
 | `consensus`, `liabilities` | — | bundled; `consensus` needs an OAS table that has never been built, so it is out of `DEFAULT_SCORERS` ([docs/provisioning.md](docs/provisioning.md)) | yes |
 | `thermompnn` | Env B | `git clone https://github.com/Kuhlman-Lab/ThermoMPNN`, then `uv sync --extra cu121` against its own `pyproject.toml` (or `mamba env create -f environment.yaml`); needs `THERMOMPNN_SRC` | route yes, invocation no |
 | `gearbind` | container | build from `https://github.com/DeepGraphLearning/GearBind`; no published image | yes |

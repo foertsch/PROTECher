@@ -318,6 +318,32 @@ def test_unknown_model_lists_the_known_ones(tmp_path, target) -> None:
 
 
 def test_importing_design_pipeline_pulls_in_no_model() -> None:
+    import os
+    import subprocess
     import sys
 
-    assert not {m for m in sys.modules if m.split(".")[0] in {"torch", "jax"}}
+    import design_pipeline
+
+    # In process this held only by accident: it passed while nothing that ran
+    # before it had imported torch, and core now installs CPU torch on purpose
+    # for ablang2, the default scorer. So ask a fresh interpreter instead, which
+    # is order-independent and is also what provision/core.sh runs.
+    root = Path(design_pipeline.__file__).resolve().parent.parent
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys, design_pipeline;"
+            "print(','.join(sorted({m.split('.')[0] for m in sys.modules}"
+            " & {'torch', 'jax'})))",
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(root)},
+        check=True,
+    )
+    leaked = probe.stdout.strip()
+    assert not leaked, (
+        f"importing design_pipeline pulled in {leaked}. The model imports "
+        "belong inside the adapter that needs them, not at module level."
+    )
