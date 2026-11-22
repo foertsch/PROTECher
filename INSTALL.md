@@ -24,10 +24,11 @@ It imports nothing for real and pulls nothing, so it is safe on a login node.
 
 ## 1. Python environment
 
-Python 3.11 or newer. We use [uv](https://docs.astral.sh/uv/).
+Python 3.12 or newer - `biotite>=2.0` requires it, so 3.11 cannot resolve
+this package. We use [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv venv --python 3.11
+uv venv --python 3.12
 uv pip install -e '.[dev]'
 ```
 
@@ -38,7 +39,7 @@ call `.venv/bin/python` / `.venv\Scripts\python.exe` directly.
 Without uv:
 
 ```bash
-python3.11 -m venv .venv
+python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```
 
@@ -216,8 +217,9 @@ so the whole loop is testable on a laptop. Run the test suite:
 .venv/bin/python -m pytest -q
 ```
 
-197 tests, about 30 seconds, fully offline. Then run the real pipeline against
-fixtures:
+834 tests, about 15 seconds, fully offline - a handful skip depending on what
+else is present (matplotlib, HMMER), and nothing should fail. Then run the real
+pipeline against fixtures:
 
 ```bash
 .venv/bin/python examples/maturation.py --dummy

@@ -1,0 +1,6 @@
+{
+ "candidates": 29,
+ "capped": false,
+ "model_name": "esm2_650m",
+ "per_variant": false
+}

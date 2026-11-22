@@ -168,14 +168,48 @@ FoldX is a licensed download and nothing here can fetch it. What the script does
 is validate an unpacked copy, because every FoldX failure we have had was a
 layout problem rather than an install problem.
 
-`provision/foldx.sh --zip ~/Downloads/foldx5_Linux_0.zip` unpacks into
+### Getting it
+
+1. Register at <https://foldxsuite.crg.eu/>. The academic licence is free; the
+   account has to exist before anything is downloadable, and the licence is
+   issued against it.
+2. Download **FoldX 5 for Linux**. That is the whole of it: there is no pip
+   package, no conda recipe and no container we have.
+3. Keep the zip wherever you like - `tools/foldx/` is gitignored if you want it
+   in the tree, and the repository root is not. The script reads it from
+   wherever you point `--zip`; it never needs to live in the project.
+
+**The filename moves between releases**, so the script globs `foldx*` rather
+than matching a name: the cluster's copy was `foldx5_Linux_0.zip`, and the one
+downloaded on 2026-11-21 is `foldx_Linux_1.zip` (32.5 MB). Inside, at the top
+level, that zip holds
+
+| | |
+|---|---|
+| `foldx_20270131` | the binary, 87 MB, with its licence expiry in the name |
+| `molecules/` | 15 files of rotamer data, read by a path relative to the binary |
+| `yasaraPlugin.zip` | the YASARA plugin. Nothing here uses it |
+
+Both layouts have shipped - everything at the top level, or everything one
+directory down - and the script lifts the nested case, so either is fine.
+
+`provision/foldx.sh --zip ~/Downloads/foldx_Linux_1.zip` unpacks into
 `tools/foldx/` (gitignored) so that the binary and `molecules/` end up
 **siblings**, then checks three things:
 
 1. the binary exists and is executable (`chmod +x` if not),
 2. `molecules/` is beside it, not nested a level down — FoldX reads its rotamer
    data by relative path and fails obscurely when it is not,
-3. `--version` runs and exits 0.
+3. `--help` runs and exits 0.
+
+Check 3 was `--version` until 2026-11-21, when it failed on a working
+`foldx_20270131`: FoldX 5's own option parser treats `--version` as an option
+that *requires an argument*, so it prints its banner and then `the required
+argument for option '--version' is missing` and exits 255. A bare invocation
+exits 255 too (`No pdbs for the run found`), and so does `-version`. `--help` is
+the one invocation that exits 0 without being handed a structure, which is all
+this check can honestly ask: whether FoldX can actually score is a question only
+a real PDB answers.
 
 It prints the `export FOLDX_BINARY=...` line to add to the environment, and the
 two further variables the adapter reads (`DESIGN_PIPELINE_FOLDX_PDB`,
@@ -184,8 +218,9 @@ two further variables the adapter reads (`DESIGN_PIPELINE_FOLDX_PDB`,
 ### The expiry warning
 
 Academic FoldX licences are time-limited and the build is stamped with its
-expiry in the filename: the copy in `~/tools/foldx/` is `foldx_20261231`, i.e.
-31 December 2026. `design_pipeline.preflight` now parses that date out of
+expiry in the filename: the cluster's copy is `foldx_20261231`, i.e. 31
+December 2026, and the one installed on the Nebius box from the 2026-11-21
+download is `foldx_20270131`, i.e. 31 January 2027. `design_pipeline.preflight` now parses that date out of
 `FOLDX_BINARY` and warns when it is inside 30 days or already past. It is a
 warning, not a failure: the date is a filename convention, not something the
 binary reports, so a renamed binary must not break preflight. A rename simply
@@ -195,7 +230,7 @@ means no warning.
 
 | Prerequisite | State | What it blocks |
 |---|---|---|
-| FoldX licensed download (`foldx5_Linux_0.zip`) | **held.** `~/tools/foldx/` on the cluster's shared home, which is the only path that survived the scratch clear | the `foldx` scorer |
+| FoldX licensed download (the Linux zip) | **held.** Register at <https://foldxsuite.crg.eu/> and download FoldX 5 for Linux; the free academic licence is issued against the account. The cluster's `foldx5_Linux_0.zip` is in `~/tools/foldx/` on the shared home, the only path that survived the scratch clear | the `foldx` scorer |
 | OAS frequency table (`DESIGN_PIPELINE_OAS_TABLE`) | **does not exist, and never did** | the `consensus` scorer |
 
 The OAS table was never committed (`git log --all --diff-filter=A` over the
@@ -357,7 +392,7 @@ provision/core.sh
 ```
 
 ```bash
-provision/foldx.sh --zip ~/Downloads/foldx5_Linux_0.zip
+provision/foldx.sh --zip ~/Downloads/foldx_Linux_1.zip
 ```
 
 ```bash

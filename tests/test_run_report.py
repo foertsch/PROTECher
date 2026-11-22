@@ -1,10 +1,16 @@
 """run_report: loading manifests, grading, report files, comparison across runs, leaderboard."""
 
+import importlib.util
 import json
 from pathlib import Path
 
 import pandas as pd
 import pytest
+
+HAS_MATPLOTLIB = importlib.util.find_spec("matplotlib") is not None
+"""matplotlib is the `notebooks` extra, not `[dev]`. The report builds either
+way - `render._pyplot` leaves a figure out rather than failing - so the files
+that depend on it are asserted separately from the ones that always appear."""
 
 from run_report.__main__ import DEFAULT_THRESHOLDS, main
 from run_report.config import Metric, load_config
@@ -77,7 +83,7 @@ def test_load_designs_flattens_scores_and_meta(tmp_path):
 def test_designs_meta_sidecar_adds_mutations_and_group(tmp_path):
     run = write_run(tmp_path, "r1", [{"id": "p_model_0", "iptm": 0.9, "plddt": 90.0}, {"id": "q_model_0", "iptm": 0.8, "plddt": 85.0}])
     manifest = run / "predictions" / "abc123" / "DONE"
-    records = json.loads(manifest.read_text())
+    records = json.loads(manifest.read_text(encoding="utf-8"))
     records[0]["parent_id"], records[1]["parent_id"] = "p", "q"
     manifest.write_text(json.dumps(records))
     (run / "designs_meta.csv").write_text("design,mutations,group\np,VH:K30D+VL:S52D,stability\nq,VH:A1T,affinity\n")
@@ -125,7 +131,7 @@ def test_parent_with_several_seeds_is_averaged(tmp_path):
     assert parent["id"] == "wt_model_a" and parent["matched_ids"] == "wt_model_a|wt_model_b"
     out = tmp_path / "out"
     assert main(["build", str(tmp_path / "r1"), "--run-id", "r1", "--out", str(out), "--parent", "wt_model"]) == 0
-    text = (out / "report.md").read_text()
+    text = (out / "report.md").read_text(encoding="utf-8")
     assert "parent 0.85" in text and text.count("(parent)") == 2
 
 
@@ -139,12 +145,16 @@ def test_build_writes_every_file(tmp_path):
     out = tmp_path / "reports" / "r1"
     code = main(["build", str(run), "--run-id", "r1", "--out", str(out), "--parent", "wt"])
     assert code == 0
-    for name in ("report.md", "designs.csv", "summary.json", "scatter.png", "compare.png"):
+    for name in ("report.md", "designs.csv", "summary.json"):
         assert (out / name).is_file(), name
-    summary = json.loads((out / "summary.json").read_text())
+    for name in ("scatter.png", "compare.png"):
+        # The figures are matplotlib's, so their absence is expected on a
+        # `[dev]`-only install and must not be read as a broken build.
+        assert (out / name).is_file() is HAS_MATPLOTLIB, name
+    summary = json.loads((out / "summary.json").read_text(encoding="utf-8"))
     assert summary["n_designs"] == 5 and summary["n_pass"] == 3
     assert summary["metrics"]["iptm"]["parent"] == 0.90
-    text = (out / "report.md").read_text()
+    text = (out / "report.md").read_text(encoding="utf-8")
     assert "3/5 designs pass all gates" in text and "parent 0.90" in text
     assert "VH:K30D+VL:S52D" in text and "stability" in text
     assert "nan" not in text.split("## Scorecard")[1]  # blank group or mutations print as "-"
@@ -166,7 +176,7 @@ def test_second_run_is_compared_with_the_first(tmp_path):
     better = [{**r, "iptm": min(1.0, r["iptm"] + 0.1)} for r in ROWS]
     r2 = write_run(tmp_path, "r2", better, producer="chai")
     main(["build", str(r2), "--run-id", "r2", "--out", str(reports / "r2"), "--history", str(reports)])
-    text = (reports / "r2" / "report.md").read_text()
+    text = (reports / "r2" / "report.md").read_text(encoding="utf-8")
     assert "earlier best run r1" in text and "r1" in text and "(this run)" in text
     assert [s["run_id"] for s in load_summaries(reports)] == ["r1", "r2"]
     assert [s["run_id"] for s in load_summaries(reports, exclude="r2")] == ["r1"]
@@ -177,7 +187,7 @@ def test_rebuilding_a_run_does_not_compare_it_with_itself(tmp_path):
     r1 = write_run(tmp_path, "r1", ROWS)
     for _ in range(2):
         main(["build", str(r1), "--run-id", "r1", "--out", str(reports / "r1"), "--history", str(reports)])
-    assert "earlier best run" not in (reports / "r1" / "report.md").read_text()
+    assert "earlier best run" not in (reports / "r1" / "report.md").read_text(encoding="utf-8")
 
 
 def test_leaderboard_bolds_best_and_lists_top_designs(tmp_path):
@@ -188,7 +198,7 @@ def test_leaderboard_bolds_best_and_lists_top_designs(tmp_path):
         main(["build", str(run), "--run-id", rid, "--out", str(reports / rid), "--history", str(reports)])
     out = tmp_path / "LEADERBOARD.md"
     assert main(["leaderboard", str(reports), "--out", str(out)]) == 0
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert "[r1](reports/r1/report.md)" in text and "[r2](reports/r2/report.md)" in text
     assert "**0.87**" in text and "**0.82**" not in text  # r2's ipTM median beats r1's
     assert "Best passing designs across all runs" in text

@@ -1,0 +1,13 @@
+[
+ {
+  "id": "scores-9e61a7e5",
+  "path": "scores.csv",
+  "parent_id": "1N8Z",
+  "producer": "ablang2",
+  "scores": {},
+  "meta": {
+   "cache_key": "9e61a7e5b444ab29",
+   "candidates": 86
+  }
+ }
+]

@@ -1,0 +1,13 @@
+[
+ {
+  "id": "scores-fc027456",
+  "path": "scores.csv",
+  "parent_id": "1N8Z",
+  "producer": "antifold_seq",
+  "scores": {},
+  "meta": {
+   "cache_key": "fc027456af712e43",
+   "candidates": 29
+  }
+ }
+]

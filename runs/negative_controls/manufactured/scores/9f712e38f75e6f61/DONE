@@ -1,0 +1,13 @@
+[
+ {
+  "id": "scores-9f712e38",
+  "path": "scores.csv",
+  "parent_id": "1N8Z",
+  "producer": "antiberty",
+  "scores": {},
+  "meta": {
+   "cache_key": "9f712e38f75e6f61",
+   "candidates": 86
+  }
+ }
+]

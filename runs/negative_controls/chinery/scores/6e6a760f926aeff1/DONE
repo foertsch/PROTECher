@@ -1,0 +1,13 @@
+[
+ {
+  "id": "scores-6e6a760f",
+  "path": "scores.csv",
+  "parent_id": "1N8Z",
+  "producer": "foldx",
+  "scores": {},
+  "meta": {
+   "cache_key": "6e6a760f926aeff1",
+   "candidates": 253
+  }
+ }
+]

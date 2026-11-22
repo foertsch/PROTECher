@@ -1,0 +1,68 @@
++ /home/kira/protecher/tools/antifold/venv/bin/python -c import runpy, sys; sys.path.insert(0, '/home/kira/protecher'); runpy.run_module('antifold_score', run_name='__main__', alter_sys=True) --pdb data/structures/1N8Z.pdb --out_dir runs/negative_controls/wt_argmax_region/scores/fa673549d7447167 --route table --mutations_csv runs/negative_controls/wt_argmax_region/scores/fa673549d7447167/candidates.csv --heavy B --light A
+/home/kira/protecher/tools/antifold/venv/lib/python3.13/site-packages/torch/jit/_script.py:1491: FutureWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+  warnings.warn(
+4313 of 4313 candidates scored (table route) -> runs/negative_controls/wt_argmax_region/scores/fa673549d7447167/scores.csv
+The decision rule, stated before the numbers exist:
+  random argmax over 20 residues is 5.0%.
+  FRAMEWORK at or below 10% -> the adapter is broken and its
+    numbers must not be published, whatever the CDR rate says.
+  FRAMEWORK above 50% with CDR near chance -> the column
+    works and the low paratope rate is a real property of the model.
+
+chain B (heavy): 220 residues, 120 with an IMGT region label
+chain A (light): 214 residues, 107 with an IMGT region label
+
+positions per region: CDR1 14, CDR2 11, CDR3 22, FR1 51, FR2 34, FR3 74, FR4 21
+227 labelled positions x 19 substitutions = 4313 candidates
+4313 rows, 4313 candidates
+
+scoring:
+  antifold       4313 of 4313 candidates scored
+  ablang2        4313 of 4313 candidates scored
+Loading weights:   0%|          | 0/538 [00:00<?, ?it/s]Loading weights: 100%|██████████| 538/538 [00:00<00:00, 45193.98it/s]
+[transformers] [1mEsmForMaskedLM LOAD REPORT[0m from: facebook/esm1v_t33_650M_UR90S_1
+Key                                | Status  | 
+-----------------------------------+---------+-
+esm.contact_head.regression.weight | MISSING | 
+esm.contact_head.regression.bias   | MISSING | 
+
+Notes:
+- MISSING:	those params were newly initialized because missing from the checkpoint. Consider training on your downstream task.
+Loading weights:   0%|          | 0/538 [00:00<?, ?it/s]Loading weights: 100%|██████████| 538/538 [00:00<00:00, 47883.03it/s]
+[transformers] [1mEsmForMaskedLM LOAD REPORT[0m from: facebook/esm1v_t33_650M_UR90S_1
+Key                                | Status  | 
+-----------------------------------+---------+-
+esm.contact_head.regression.weight | MISSING | 
+esm.contact_head.regression.bias   | MISSING | 
+
+Notes:
+- MISSING:	those params were newly initialized because missing from the checkpoint. Consider training on your downstream task.
+  esm1v          4313 of 4313 candidates scored
+Loading weights:   0%|          | 0/539 [00:00<?, ?it/s]Loading weights: 100%|██████████| 539/539 [00:00<00:00, 7573.61it/s]
+Loading weights:   0%|          | 0/539 [00:00<?, ?it/s]Loading weights: 100%|██████████| 539/539 [00:00<00:00, 13140.88it/s]
+  esm2_650m      4313 of 4313 candidates scored
+Fetching 2 files:   0%|          | 0/2 [00:00<?, ?it/s]Fetching 2 files: 100%|██████████| 2/2 [00:00<00:00, 829.24it/s]
+Fetching 2 files:   0%|          | 0/2 [00:00<?, ?it/s]Fetching 2 files: 100%|██████████| 2/2 [00:00<00:00, 961.67it/s]
+  antiberty      4313 of 4313 candidates scored
+
+model                    FRAMEWORK                 CDR           verdict
+------------------------------------------------------------------------
+antifold           98.3% (177/180)       76.6% (36/47)      column works
+ablang2             48.9% (88/180)       27.7% (13/47)      inconclusive
+esm1v              88.9% (160/180)       38.3% (18/47)      column works
+esm2_650m          76.1% (137/180)       25.5% (12/47)      column works
+antiberty          83.9% (151/180)       48.9% (23/47)      column works
+------------------------------------------------------------------------
+chance is 5.0%.  per-IMGT-region detail:
+
+region     CDR1   CDR2  CDR3   FR1    FR2   FR3    FR4
+model                                                 
+ablang2   14.3%  27.3% 36.4% 51.0%  44.1% 48.6%  52.4%
+antiberty 64.3%  54.5% 36.4% 96.1%  85.3% 90.5%  28.6%
+antifold  85.7% 100.0% 59.1% 96.1% 100.0% 98.6% 100.0%
+esm1v     21.4%  45.5% 45.5% 90.2%  82.4% 87.8% 100.0%
+esm2_650m 14.3%  36.4% 27.3% 68.6%  79.4% 79.7%  76.2%
+
+wrote runs/negative_controls/wt_argmax_region/wt_argmax_by_region.csv
+      runs/negative_controls/wt_argmax_region/wt_argmax_by_imgt_region.csv
+      runs/negative_controls/wt_argmax_region/matrix_with_wt.csv

@@ -23,6 +23,7 @@ estimates a pair's score by adding its singles' scores together.
 
 from __future__ import annotations
 
+import os
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -38,6 +39,7 @@ from . import metrics as _metrics
 from .designs import Design
 from .errors import RunFailedError
 from .registry import get_adapter
+from .routes import route_for
 from .structures import Complex, read_fasta, write_fasta
 from .variants import VariantTable
 
@@ -545,7 +547,30 @@ def _fan_out(
             if max_variants is not None:
                 subset = ids[:max_variants]
 
-        resolved = {"kwargs": resolved_kwargs, "extra_args": list(extra_args or ())}
+        # The environment an adapter reads is part of what produced its numbers,
+        # so it belongs in the key. DESIGN_PIPELINE_FOLDX_PDB is the case that
+        # made this concrete: it decides which structure FoldX builds on, the
+        # adapter reads it from the environment rather than taking it as a
+        # kwarg, and so repairing a better structure and pointing at it silently
+        # reused ddG values computed on the old one - a foldx.csv with rows from
+        # two different structures in it. Each variable a route declares in
+        # needs_env goes in, with the file's content hash when it names one,
+        # because a path can stay the same while the file under it changes.
+        route = route_for(name)
+        environment: dict[str, str] = {}
+        for variable in (route.needs_env if route is not None else ()):
+            value = os.environ.get(variable, "").strip()
+            if not value:
+                continue
+            environment[variable] = value
+            named = Path(value)
+            if named.is_file():
+                environment[f"{variable}:sha256"] = hash_file(named)
+        resolved = {
+            "kwargs": resolved_kwargs,
+            "extra_args": list(extra_args or ()),
+            "env": environment,
+        }
         key = tool_key(
             structure_hash=structure_hash,
             candidate_hash=hash_ids(subset),

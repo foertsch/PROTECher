@@ -54,12 +54,12 @@ Run it offline, with no GPU, no Docker and no network:
 python examples/maturation.py --dummy
 ```
 
-On the GPU box, starting from sequences rather than an accession, in a notebook:
-[notebooks/03_end_to_end.ipynb](notebooks/03_end_to_end.ipynb) takes the antibody
-and antigen FASTA, folds the parent over several seeds, runs the scan, the
-scorers, the gate and the pairs, refolds the designs as a structure veto and
-writes the K submission sequences. It has no fixture mode — it runs `preflight`
-on the adapters it is about to use and stops if one of them is missing.
+On the GPU box, starting from sequences rather than an accession:
+[examples/track_a_run.py](examples/track_a_run.py) runs the funnel - design,
+fold, summarize - and [docs/track_a_final_pipeline.md](docs/track_a_final_pipeline.md)
+records the chain that produced the 15 submitted designs, naming the script for
+each step. There is no fixture mode on that path, so run
+`python -m design_pipeline.preflight` first and read the `resolved` column.
 
 Three things about this that are deliberate:
 

@@ -163,6 +163,118 @@ def rank_weighted(rows: list[dict], chem_weight: float, band_sd: float = 1.0) ->
     return ranked, band
 
 
+def read_qualification(path: str | None) -> dict[str, dict]:
+    """`{column: row}` from a qualification.csv, or {} when none is given.
+
+    Written by `notebooks/06_score_correlation_audit.ipynb`: one row per column
+    that could enter a score, with the panel verdict and the ICC behind it. The
+    ranker reads it so that which columns may be weighted is a measurement
+    carried in a file, not a tuple someone edited here - the failure this whole
+    rebuild came from was a column carrying weight 1.0 that nothing had tested.
+    """
+    if not path:
+        return {}
+    with open(path, newline="") as handle:
+        rows = {r["column"]: r for r in csv.DictReader(handle)}
+    if not rows:
+        raise SystemExit(f"{path} has no rows")
+    return rows
+
+
+def check_qualified(weights: dict[str, float], qualification: dict[str, dict]) -> list[str]:
+    """Complain about every weighted column the qualification table does not clear.
+
+    Returns the warning lines. A column with weight 0 is reported, not scored,
+    so it is not checked; a weighted column missing from the table is a warning
+    of its own, because "not measured" is not "fine".
+    """
+    lines = []
+    for column, weight in sorted(weights.items()):
+        if not weight:
+            continue
+        row = qualification.get(column)
+        if row is None:
+            lines.append(f"{column} carries weight {weight:g} and is not in the "
+                         f"qualification table at all")
+            continue
+        verdict = str(row.get("qualified", "")).strip().lower()
+        if verdict not in ("true", "yes", "1", "pass"):
+            lines.append(f"{column} carries weight {weight:g} but its "
+                         f"qualification is {row.get('qualified')!r} "
+                         f"({row.get('why', 'no reason given')})")
+    return lines
+
+
+def read_foldx(path: str | None) -> dict[str, float]:
+    """`{variant_id: -ddg}` from a foldx.csv, the sign flipped to higher-is-better.
+
+    `_foldx_score.py` writes `ddg` as a binding ddG in kcal/mol, positive for a
+    variant that costs binding. Every score in this repository is
+    higher-is-better, so the ranker negates it here, once, where it can be seen.
+    """
+    if not path:
+        return {}
+    out: dict[str, float] = {}
+    with open(path, newline="") as handle:
+        for row in csv.DictReader(handle):
+            try:
+                out[row["variant_id"]] = -float(row["ddg"])
+            except (KeyError, TypeError, ValueError):
+                continue
+    if not out:
+        raise SystemExit(f"{path} has no usable variant_id,ddg rows")
+    return out
+
+
+def rank_qualified(
+    rows: list[dict],
+    foldx: dict[str, float],
+    meta: dict[str, dict],
+    weights: dict[str, float],
+    band_sd: float = 1.0,
+) -> tuple[list[dict], dict]:
+    """Rank by the qualified profile: z over each weighted column, summed.
+
+    The per-fold aggregates (ipSAE, contact, coulomb, chem) are still computed
+    and still reported, because they are what a reader wants to see beside the
+    new order - they simply carry no weight unless `weights` gives them one.
+    A candidate with no FoldX ddG gets no score rather than a zero: this score
+    has one term, and a zero there would rank it mid-field on no evidence.
+    """
+    ranked, band = rank_rows(rows, band_sd)
+    terms: dict[str, dict[str, float]] = {}
+    if weights.get("foldx"):
+        have = {}
+        for o in ranked:
+            variant = (meta.get(o["name"], {}) or {}).get("variant_id", "")
+            o["foldx_ddg"] = -foldx[variant] if variant in foldx else math.nan
+            if variant in foldx:
+                have[o["name"]] = foldx[variant]
+        terms["foldx"] = _z(have)
+    for column in ("coulomb", "contact", "ipsae_max"):
+        if weights.get(column):
+            usable = {o["name"]: o[column] for o in ranked if not math.isnan(o[column])}
+            terms[column] = _z(usable)
+    for o in ranked:
+        parts, missing = 0.0, False
+        for column, weight in weights.items():
+            if not weight:
+                continue
+            value = terms.get(column, {}).get(o["name"])
+            if value is None:
+                missing = True
+                break
+            parts += weight * value
+        o["score"] = math.nan if missing else parts
+    scored = [o for o in ranked if not math.isnan(o["score"])]
+    unscored = [o for o in ranked if math.isnan(o["score"])]
+    scored.sort(key=lambda o: -o["score"])
+    ranked = scored + unscored
+    for i, o in enumerate(ranked, 1):
+        o["rank"] = i
+    return ranked, band
+
+
 # ------------------------------------------------------------------ what feeds the score, and the correlation audit
 # `rank_weighted` is the whole score:   score = z(ipsae_max) + chem_weight * chem_z,   chem_z = z(contact) + z(coulomb)
 # so these three columns are its only independent inputs. Everything else ranking.csv carries is reported, never scored:
@@ -171,6 +283,63 @@ def rank_weighted(rows: list[dict], chem_weight: float, band_sd: float = 1.0) ->
 # terms. Keep this tuple beside the formula: the audit below reads it, so a column that joins the score without joining this
 # tuple is a column that stops being checked.
 SCORE_INPUTS = ("ipsae_max", "contact", "coulomb")
+
+# ------------------------------------------------------------------ weight profiles
+# Two named scores, because the first one shipped and its output has to stay
+# reproducible. `hackathon_v1` is the formula the submitted ranking was made
+# with, kept bit-for-bit: it runs the original code path, not a reconstruction
+# of it. `qualified_v1` is the one the negative-control panel licenses.
+#
+# What changed between them, and why:
+#
+#   * ipsae_max is OUT, and the reason is reliability, not a verdict on the
+#     metric. ipSAE is a co-folding CONFIDENCE measure: it reads the predicted
+#     interface's PAE and says how surely the predictor placed the two chains.
+#     It was never meant to predict affinity, so the direction panel (AUROC
+#     0.476, CI 0.220-0.732, n=29) is not evidence that ipSAE is bad at its own
+#     job - it is evidence that it does not order point mutants by affinity,
+#     which is what weight 1.0 in a ranking asked it to do.
+#     What disqualifies it as a RANKING column is its own noise: ICC 0.298 over
+#     116 designs x 3 seeds, so two folds of one design differ about as much as
+#     two different designs; one seed against another ranks at rho 0.31 and the
+#     top 15 overlap by 3-6 of 15. That argument needs no panel at all.
+#     Its original use - `rank_rows`'s band at the parent's mean minus 2 SD,
+#     a veto on complexes that have collapsed - is a different and defensible
+#     claim that nothing here tested and nothing here refutes. `in_band` is
+#     still reported for exactly that purpose.
+#   * foldx is IN, alone. It is the only scorer that passed, on both panels
+#     (direction 0.792, CI 0.583-0.958; Chinery 0.716, CI 0.651-0.780), and the
+#     only one that never ranks a deliberate break above a real improvement.
+#   * contact is OUT and not merely down-weighted. ICC 0.398 overall, but that
+#     is an artefact of zero-inflation: 66 of 115 designs are zero in all three
+#     seeds, and among the 44 that vary the ICC is 0.000 - no reproducible
+#     between-design component at all. For 39 designs even the zero/nonzero
+#     call flips with the seed.
+#   * coulomb (ICC 0.734, the best of the six per-fold columns) and chem
+#     (0.528) are reported, unweighted. 0.734 is the only marginal case here,
+#     and giving a marginal column weight is the mistake this rebuild exists to
+#     undo; COULOMB_WEIGHT is the knob if that call is revisited.
+COULOMB_WEIGHT = 0.0
+
+PROFILES: dict[str, dict] = {
+    "hackathon_v1": {
+        "formula": "z(ipsae_max) + 0.15 * chem_z",
+        "weights": {"ipsae_max": 1.0, "contact": 0.15, "coulomb": 0.15},
+        "qualified": False,
+        "why": "the submitted ranking; ipsae_max was never qualified and is "
+               "mostly seed noise, so this profile exists for reproducibility "
+               "and not as a recommendation",
+    },
+    "qualified_v1": {
+        "formula": "z(-foldx_ddg)" + (f" + {COULOMB_WEIGHT} * z(coulomb)"
+                                      if COULOMB_WEIGHT else ""),
+        "weights": {"foldx": 1.0, **({"coulomb": COULOMB_WEIGHT} if COULOMB_WEIGHT else {})},
+        "qualified": True,
+        "why": "every weighted column passed the negative-control panel and has "
+               "an ICC that supports ranking on it",
+    },
+}
+DEFAULT_PROFILE = "hackathon_v1"
 
 # Every per-candidate column worth auditing, the score's inputs first. `chem` and `chem_z` are the same formula over
 # different populations (`chem` over the in-band on-site candidates, `chem_z` over all on-site ones and 0 for a candidate
@@ -376,11 +545,56 @@ def rank(args: argparse.Namespace) -> int:
     if args.candidates:
         with open(args.candidates, newline="") as handle:
             meta = {r["name"]: r for r in csv.DictReader(handle)}
-    ranked, band = rank_weighted(rows, args.chem_weight) if args.chem_weight is not None else rank_rows(rows)
+    profile_name = args.weights or DEFAULT_PROFILE
+    if profile_name not in PROFILES:
+        raise SystemExit(f"unknown weight profile {profile_name!r}; "
+                         f"known: {', '.join(PROFILES)}")
+    profile = PROFILES[profile_name]
+    qualification = read_qualification(args.qualification)
+    print(f"weight profile {profile_name}: score = {profile['formula']}")
+    print(f"  {profile['why']}")
+    if qualification:
+        complaints = check_qualified(profile["weights"], qualification)
+        for line in complaints:
+            print(f"  warning: {line}")
+        if complaints and profile["qualified"]:
+            raise SystemExit(
+                f"{profile_name} claims to be qualified but the table in "
+                f"{args.qualification} does not clear every weighted column. "
+                f"Fix the profile or the table; do not publish a ranking whose "
+                f"own provenance file disagrees with it."
+            )
+    elif profile["qualified"]:
+        print("  warning: no --qualification given, so nothing checked which "
+              "columns this profile weights")
+
+    if profile_name == "hackathon_v1":
+        # The original dispatch, character for character: `--chem-weight` picks
+        # the weighted score, and its ABSENCE picks the band rule of
+        # `rank_rows`, which is a different ordering and not a weighted score at
+        # all. An earlier version of this branch defaulted the weight to 0.15
+        # and so made the band rule unreachable - a silent change to what
+        # `rank` does with no arguments.
+        ranked, band = (rank_weighted(rows, args.chem_weight)
+                        if args.chem_weight is not None else rank_rows(rows))
+    else:
+        ranked, band = rank_qualified(rows, read_foldx(args.foldx), meta,
+                                      profile["weights"])
     check_score_correlations(ranked, args.correlation_limit)      # a score input that duplicates another must not pass quietly
     print(f"parent ipSAE (max) {band['parent_mean']:.3f}, SD {band['parent_sd']:.3f} over {band['parent_folds']} folds; band floor {band['floor']:.3f}")
     print(f"{len(ranked)} candidates; in band {sum(o['in_band'] for o in ranked)}; chem-scored {sum(not math.isnan(o['chem']) for o in ranked)}")
-    fields = ["rank", "name", "source", "variant_id", "seeds", "ipsae_max", "ipsae_min", "iptm", "in_band", "n_on_site", "contact", "coulomb", "para_net", "chem", "chem_z", "score"]
+    # Only meaningful where the profile computes a score at all: `rank_rows`
+    # orders by the band rule and sets no `score`, so counting NaNs there would
+    # report every candidate as unscored.
+    scores_computed = any("score" in o for o in ranked)
+    unscored = (sum(1 for o in ranked if math.isnan(o.get("score", math.nan)))
+                if scores_computed else 0)
+    if unscored:
+        print(f"{unscored} candidate(s) have no score under this profile and are "
+              f"listed after the scored ones, never interleaved with them")
+    for o in ranked:
+        o["profile"] = profile_name
+    fields = ["rank", "name", "source", "variant_id", "profile", "seeds", "ipsae_max", "ipsae_min", "iptm", "in_band", "n_on_site", "contact", "coulomb", "para_net", "chem", "chem_z", "foldx_ddg", "score"]
     with open(args.out, "w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -408,7 +622,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     r.add_argument("--candidates", help="candidates.csv, to show the variant ids")
     r.add_argument("--out", required=True)
     r.add_argument("--top", type=int, default=25)
-    r.add_argument("--chem-weight", type=float, help="rank by z(ipSAE) + W * chemistry over all candidates instead of the band rule (0.15 keeps chemistry in at a small weight)")
+    r.add_argument("--chem-weight", type=float, help="hackathon_v1 only: rank by z(ipSAE) + W * chemistry instead of the band rule (default 0.15)")
+    r.add_argument("--weights", choices=sorted(PROFILES), default=DEFAULT_PROFILE,
+                   help=f"weight profile (default {DEFAULT_PROFILE}, which reproduces the submitted ranking)")
+    r.add_argument("--foldx", help="foldx.csv of variant_id,ddg - required by qualified_v1")
+    r.add_argument("--qualification", help="qualification.csv from notebook 06; checked against the profile's weighted columns")
     r.add_argument("--correlation-limit", type=float, default=CORRELATION_LIMIT,
                    help=f"warn when two score inputs correlate at or above this (default {CORRELATION_LIMIT})")
     r.set_defaults(run=rank)

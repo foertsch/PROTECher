@@ -1,0 +1,6 @@
+model,framework_rate,framework_scored,framework_wins,cdr_rate,cdr_scored,cdr_wins,verdict,cdr_vs_chance
+antifold,0.9833333333333333,180,177,0.7659574468085106,47,36,column works,above chance
+ablang2,0.4888888888888889,180,88,0.2765957446808511,47,13,inconclusive,above chance
+esm1v,0.8888888888888888,180,160,0.3829787234042553,47,18,column works,above chance
+esm2_650m,0.7611111111111111,180,137,0.2553191489361702,47,12,column works,above chance
+antiberty,0.8388888888888889,180,151,0.48936170212765956,47,23,column works,above chance

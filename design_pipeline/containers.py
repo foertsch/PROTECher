@@ -174,9 +174,9 @@ class ContainerAdapter:
 
         designs: list[Design] = []
         for batch in batches:
-            before = self._existing(output_dir)
+            before = fingerprints(output_dir, self.output_globs)
             stream(self._command(runtime, batch, output_dir, extra_args or (), kwargs))
-            produced = [p for p in self._existing(output_dir) if p not in before]
+            produced = produced_since(before, fingerprints(output_dir, self.output_globs))
             # One input per invocation, so the parent is unambiguous; a fresh
             # run from a target path has no parent design.
             parent = batch[0] if len(batch) == 1 else None
@@ -255,6 +255,45 @@ def existing(output_dir: Path, patterns: Sequence[str]) -> set[Path]:
     for pattern in patterns:
         found |= set(output_dir.rglob(pattern))
     return found
+
+
+def fingerprints(output_dir: Path, patterns: Sequence[str]) -> dict[Path, tuple[int, int] | None]:
+    """Each matching file with its (mtime_ns, size), for telling "the run wrote
+    this" from "this was already here".
+
+    Comparing paths alone was enough while every tool wrote its output once at
+    the end. A resumable one does not: `adapters/_foldx_score.py` appends each
+    candidate as it finishes and skips candidates already in `foldx.csv`, so on
+    a resumed run the output file is in `before`, nothing looks produced, and
+    the wrapper raised RunFailedError over a run that had just scored 218
+    candidates. A changed file is a produced file.
+    """
+    marks: dict[Path, tuple[int, int] | None] = {}
+    for path in existing(output_dir, patterns):
+        try:
+            stat = path.stat()
+        except OSError:  # pragma: no cover - vanished between glob and stat
+            marks[path] = None
+        else:
+            marks[path] = (stat.st_mtime_ns, stat.st_size)
+    return marks
+
+
+def produced_since(
+    before: dict[Path, tuple[int, int] | None], after: dict[Path, tuple[int, int] | None]
+) -> list[Path]:
+    """The outputs of a run that exited 0: the files it created or changed, or -
+    when it changed nothing - the matching files already there.
+
+    The fall-back is what makes a resumed run idempotent. A tool that resumes
+    and finds every candidate already scored writes nothing at all, and that is
+    success, not failure. Accepting what is on disk is safe because the
+    directory is keyed by this run's own inputs (`cache.tool_key`): a file in it
+    came from exactly these inputs and this model, i.e. from an earlier attempt
+    at this same work, which is what resuming means.
+    """
+    changed = sorted(path for path, mark in after.items() if before.get(path) != mark)
+    return changed or sorted(after)
 
 
 def designs_from(
@@ -345,13 +384,11 @@ class ProcessAdapter:
 
         designs: list[Design] = []
         for batch in batches:
-            before = existing(output_dir, self.output_globs)
+            before = fingerprints(output_dir, self.output_globs)
             stream(
                 self._command(str(chosen), batch, output_dir, extra_args or (), kwargs)
             )
-            produced = [
-                p for p in existing(output_dir, self.output_globs) if p not in before
-            ]
+            produced = produced_since(before, fingerprints(output_dir, self.output_globs))
             parent = batch[0] if len(batch) == 1 else None
             designs += designs_from(
                 produced, output_dir, parent, self.tool, self.collect

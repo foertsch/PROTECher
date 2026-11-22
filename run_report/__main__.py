@@ -59,7 +59,13 @@ def build(args: argparse.Namespace) -> int:
 
 
 def leaderboard(args: argparse.Namespace) -> int:
-    Path(args.out).write_text(build_leaderboard(args.reports_dir, top=args.top))
+    # encoding spelled out on every write in this package: the report carries
+    # U+2717 and U+00B7, and `write_text` without it uses the platform default,
+    # which is cp1252 on Windows - building a report there raised
+    # UnicodeEncodeError and took five tests with it. Linux never saw it because
+    # PEP 538 coerces the C locale to UTF-8, so this is a Windows-only break on
+    # exactly the machine INSTALL.md section 2 tells you to run the suite on.
+    Path(args.out).write_text(build_leaderboard(args.reports_dir, top=args.top), encoding="utf-8")
     print(f"wrote {args.out} from {len(load_summaries(args.reports_dir))} reports")
     return 0
 

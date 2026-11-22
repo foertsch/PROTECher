@@ -49,8 +49,8 @@ script = "provision/foldx.sh"
 install = "licensed-zip"
 what = "the physics ddG baseline"
 constraint = "a licensed binary, not a Python package"
-prerequisite = "foldx5_Linux_0.zip"
-binary = "foldx_20261231"
+prerequisite = "the FoldX 5 Linux zip from https://foldxsuite.crg.eu/ (register first; the filename moves between releases)"
+binary = "foldx_20261231 on the cluster, foldx_20270131 from the 2026-11-21 download"
 binary_size = "87 MB"
 layout = "the binary and molecules/ must be siblings"
 env_vars = ["FOLDX_BINARY", "DESIGN_PIPELINE_FOLDX_PDB", "DESIGN_PIPELINE_FOLDX"]
@@ -259,7 +259,8 @@ source = "Hugging Face"
 
 [[prerequisite]]
 name = "FoldX licensed download"
-artifact = "foldx5_Linux_0.zip"
+artifact = "the FoldX 5 Linux zip (foldx5_Linux_0.zip, foldx_Linux_1.zip - the name moves)"
+source = "https://foldxsuite.crg.eu/ - register, then download FoldX 5 for Linux; the academic licence is free and issued against the account"
 state = "held"
 where = "~/tools/foldx/ on the cluster's shared home"
 survives_scratch_clear = true

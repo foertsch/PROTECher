@@ -1,0 +1,13 @@
+[
+ {
+  "id": "scores-adc3e6bb",
+  "path": "scores.csv",
+  "parent_id": "1N8Z",
+  "producer": "esm2_650m",
+  "scores": {},
+  "meta": {
+   "cache_key": "adc3e6bb79650346",
+   "candidates": 253
+  }
+ }
+]

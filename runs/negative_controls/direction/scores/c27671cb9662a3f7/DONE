@@ -1,0 +1,13 @@
+[
+ {
+  "id": "scores-c27671cb",
+  "path": "scores.csv",
+  "parent_id": "1N8Z",
+  "producer": "antiberty",
+  "scores": {},
+  "meta": {
+   "cache_key": "c27671cb9662a3f7",
+   "candidates": 29
+  }
+ }
+]
