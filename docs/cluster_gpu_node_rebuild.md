@@ -35,7 +35,7 @@ Everything below lives under `/scratch/foertsch/` unless it says `~`.
 | `protecher/runs/` | 612 MB | earlier pipeline runs and smoke tests |
 | `protecher_track_a_run`, `protecher_loop_arm` | 141 MB, 168 MB | evidence-funnel run output; the exploratory RFdiffusion loop arm |
 | `protecher_pr23_foldx_results`, `protecher_foldx_calib`, `protecher_results`, `esm1v_scan` | under 3 MB each | FoldX run, calibration and ESM-1v scan tables |
-| `protecher_tools/ipsae/` | 0.1 MB + `work/` | `ipsae.py` (Dunbrack **v4**) and `ipsae_reference_results.csv`, the reference values the in-process scorer was checked against on 30 Boltz-2 complexes. `design_pipeline/ipsae.py` in the repo is v3 |
+| `protecher_tools/ipsae/` | 0.1 MB + `work/` | `ipsae.py` (Dunbrack **v4**) and `ipsae_reference_results.csv`, the reference values the in-process scorer was checked against on 30 Boltz-2 complexes. This is the only copy of the script kept anywhere; the repository holds none |
 | `protecher_cache/msa_candidates/trastuzumab_her2/variants/` | part of 548 MB | per-variant alignments derived from the parent's; regenerable by `msa_cache` |
 
 Not worth keeping: `protecher_tools/uv-cache` (28 GB), `apptainer/cache` (15 GB), `~60` small per-job `protecher_*` dirs of 1 to 12 MB (each is a copy of the repo tree plus a log), `protecher_cache/_*_test` dirs, `.cache/pip`, `.cache/pixi`.
@@ -46,7 +46,7 @@ Not worth keeping: `protecher_tools/uv-cache` (28 GB), `apptainer/cache` (15 GB)
 
 | Component | Path | Size | Versions (measured) | Weights, source |
 |---|---|---|---|---|
-| **Env A** (this package, tests, scoring) | `protecher/.venv` | 0.6 GB | Python 3.12.16; biotite 2.0.0, numpy 2.5.4, pandas 3.1.0, scipy 1.18.1, pyarrow 26.0.0, matplotlib 3.11.2, pytest 9.2.0; the package editable | none |
+| **`core`** (this package, tests, scoring) | `protecher/.venv` | 0.6 GB | Python 3.12.16; biotite 2.0.0, numpy 2.5.4, pandas 3.1.0, scipy 1.18.1, pyarrow 26.0.0, matplotlib 3.11.2, pytest 9.2.0; the package editable | none |
 | **Boltz-2** | `protecher/.venv-boltz`, link `T/bin/boltz` | 7.1 GB | Python 3.12.16; boltz 2.2.1, torch 2.15.0, cuequivariance 0.13.0 (+ `-torch`, `-ops-*`), numpy 1.26.4, pandas 3.0.6, rdkit 2026.9.1 | `C/boltz`: `boltz2_conf.ckpt` 2.3 GB, `boltz2_aff.ckpt` 2.1 GB, `mols.tar` 1.9 GB. `boltz predict` downloads what is missing on first run ([INSTALL.md](../INSTALL.md)); `BOLTZ_CACHE` points here |
 | **Chai-1** (comparison only, not used for the final screen) | `protecher/.venv-chai` | 6.2 GB | Python 3.12.16; chai-lab 0.6.1, torch 2.6.0, numpy 1.26.4, pandas 2.3.3 | `C/chai`: `models_v2/` (trunk 633 MB, diffusion 477 MB, small heads), `esm/traced_sdpa_esm2_t36_3B_UR50D_fp16.pt` 5.7 GB, `conformers_v1.apkl` 125 MB; `CHAI_DOWNLOADS_DIR` |
 | **AntiFold + AbLang2** | `T/antifold/{src,venv}` | 6.8 GB | Python 3.13; AntiFold from the GitHub source (v0.4.0 per INSTALL.md; the node copy has no `.git`), torch 2.15.0, torch-geometric 2.8.1, biotite 2.0.0, numpy 2.5.4, pandas 3.1.0, ablang2 0.2.1, anarcii 2.0.8 | `src/models/model.pt` 567 MB (AntiFold, downloaded on first use; INSTALL.md says pass `weights=`); AbLang2 paired weights 179 MB inside the venv's `ablang2/model-weights-ablang2-paired/` |
@@ -81,7 +81,7 @@ Do this on `fgcz-r-023` through `sbatch`, since `/scratch` is node-local; a logi
 
 1. **Folders and `env.sh`.** Recreate `T` and `C`, write `T/env.sh` as above, `source` it.
 2. **Repo.** `git clone git@github.com:foertsch/PROTECher.git /scratch/foertsch/protecher`.
-3. **Env A.** `uv venv --python 3.12 .venv && uv pip install -e .` plus `pytest`; compare with `cluster_freezes/freeze_venv.txt`. Check with `pytest tests -q`; the suite was 771 passed, 1 skipped on 2026-11-02.
+3. **`core`.** `uv venv --python 3.12 .venv && uv pip install -e .` plus `pytest`; compare with `cluster_freezes/freeze_venv.txt`. Check with `pytest tests -q`; the suite was 771 passed, 1 skipped on 2026-11-02.
 4. **Boltz-2.** `uv venv --python 3.12 .venv-boltz && uv pip install -e '.[boltz]'` (the repo's extra), or `grep -vE '^(-e|Using)|@ file' docs/cluster_freezes/freeze_venv-boltz.txt | uv pip install -r -` (the filter drops the editable-install and header lines the freeze files carry) to get the measured versions. Link `T/bin/boltz`. Fetch the weights by running one `boltz predict` with `BOLTZ_CACHE` set. The `boltz-weights` Modal volume probably holds a copy; its contents were not checked.
 5. **Parent alignments.** `cp -r ~/protecher_msa_candidates/* $C/msa_candidates/` and the structures to `$C/structures/`. Nothing else is needed to fold the parent and its variants, because the variant alignments are derived from the parent's (`python -m msa_cache`); no server call is made after that.
 6. **AntiFold and AbLang2** (only to rerun the evidence funnel's veto). Python 3.13 venv, install AntiFold from the GitHub source at v0.4.0, `uv pip install ablang2==0.2.1`; compare with `freeze_antifold.txt`. Export `DESIGN_PIPELINE_ANTIFOLD` and `ANTIFOLD_SRC`.

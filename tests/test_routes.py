@@ -138,10 +138,23 @@ def test_a_licence_gated_scorer_says_so(tmp_path) -> None:
         _scorers.foldx.run([], tmp_path, candidates=candidates)
 
 
-def test_preflight_lists_every_adapter_and_fails_on_a_short_campaign(capsys) -> None:
+def test_preflight_lists_every_adapter_and_fails_on_a_short_campaign(
+    capsys, monkeypatch
+) -> None:
     """Exit 1 when a default-campaign model does not resolve, so CI can gate on
-    it. In this environment antifold and esm_if are absent by design - the test
-    suite installs no model."""
+    it.
+
+    The campaign is substituted rather than read off the ambient environment.
+    This test used to rely on the suite's own environment having no model
+    installed, which stopped being true the moment `provision/core.sh` started
+    installing `ablang2` into `core` - the environment that script builds is
+    exactly the one `DEFAULT_SCORERS` resolves in, so the assertion failed on a
+    correctly provisioned box and passed only where nothing was installed.
+    """
+    monkeypatch.setattr(
+        preflight, "DEFAULT_CAMPAIGN", ("pdb_download", "a_model_with_no_route")
+    )
+
     code = preflight.main([])
     printed = capsys.readouterr().out
 
@@ -150,6 +163,20 @@ def test_preflight_lists_every_adapter_and_fails_on_a_short_campaign(capsys) -> 
             assert name in printed
     assert code == 1
     assert "default campaign NOT ready here" in printed
+    assert "a_model_with_no_route" in printed
+
+
+def test_preflight_exits_zero_when_every_campaign_member_resolves(
+    capsys, monkeypatch
+) -> None:
+    """The other half of the gate: what a provisioned box prints. `pdb_download`
+    is bundled, so this says nothing about the machine it runs on."""
+    monkeypatch.setattr(preflight, "DEFAULT_CAMPAIGN", ("pdb_download",))
+
+    code = preflight.main([])
+
+    assert code == 0
+    assert "default campaign resolves here." in capsys.readouterr().out
 
 
 def test_preflight_says_when_antifold_still_needs_its_source_folder(monkeypatch) -> None:
@@ -219,11 +246,20 @@ def test_the_expiry_warning_is_a_warning_and_not_an_exit_status(capsys, monkeypa
     # that an arbitrary run of eight digits in a filename is not read as one.
     monkeypatch.setenv("FOLDX_BINARY", "/x/foldx_20240101")
 
+    # Both directions, because "the licence does not decide the exit status" is
+    # a claim about two cases and the ambient environment supplies neither.
+    monkeypatch.setattr(preflight, "DEFAULT_CAMPAIGN", ("pdb_download",))
     code = preflight.main([])
     printed = capsys.readouterr().out
-
     assert "expired" in printed
-    # 1 because the suite installs no model, not because of the licence: the
-    # unresolved-campaign line is what decides it.
+    assert code == 0
+
+    monkeypatch.setattr(
+        preflight, "DEFAULT_CAMPAIGN", ("pdb_download", "a_model_with_no_route")
+    )
+    code = preflight.main([])
+    printed = capsys.readouterr().out
+    assert "expired" in printed
+    # The unresolved-campaign line is what decides the 1, not the licence.
     assert "default campaign NOT ready here" in printed
     assert code == 1

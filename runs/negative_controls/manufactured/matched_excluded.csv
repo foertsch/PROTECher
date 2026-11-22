@@ -1,0 +1,5 @@
+variant_id,site,chain,position,wt,mut,improved,measured_as
+B:D102E,B:D102,B,102,D,E,0,positive
+B:D102G,B:D102,B,102,D,G,0,positive
+B:D102N,B:D102,B,102,D,N,0,positive
+B:D102Q,B:D102,B,102,D,Q,0,positive

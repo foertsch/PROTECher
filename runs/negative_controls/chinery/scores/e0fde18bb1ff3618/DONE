@@ -1,0 +1,13 @@
+[
+ {
+  "id": "scores-e0fde18b",
+  "path": "scores.csv",
+  "parent_id": "1N8Z",
+  "producer": "esm1v",
+  "scores": {},
+  "meta": {
+   "cache_key": "e0fde18bb1ff3618",
+   "candidates": 687
+  }
+ }
+]

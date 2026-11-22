@@ -1,0 +1,10 @@
+column,qualified,tested_on_negatives,panel_verdict,panel_detail,icc,icc_varying,icc_used,n_designs,seeds,why
+chem,False,False,,,,,,,,"no panel test; no per-seed values, so no ICC"
+contact,False,False,,,0.3978,0.0,0.0,115,3,no panel test; ICC 0.000 (mostly seed noise)
+coulomb,False,False,,,0.7336,0.7331,0.7331,115,3,no panel test; ICC 0.733 (marginal)
+epitope_overlap,False,False,,,0.3359,0.3113,0.3113,115,3,no panel test; ICC 0.311 (mostly seed noise)
+foldx,True,True,pass,direction AUROC 0.792 (CI 0.58-0.96),,,,,,"not a fold-derived column: one fixed repaired structure, no Boltz seed. Its run-to-run spread is averaged away by FOLDX_RUNS and not retained, so no ICC is computable from these files"
+ipsae_max,False,False,,,0.2982,0.2982,0.2982,116,3,no panel test; ICC 0.298 (mostly seed noise)
+ipsae_min,False,False,,,0.3063,0.3063,0.3063,116,3,no panel test; ICC 0.306 (mostly seed noise)
+iptm,False,False,,,0.2782,0.2782,0.2782,116,3,no panel test; ICC 0.278 (mostly seed noise)
+paratope_net_charge,False,False,,,0.4637,0.4086,0.4086,115,3,no panel test; ICC 0.409 (mostly seed noise)

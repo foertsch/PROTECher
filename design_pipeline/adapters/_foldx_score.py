@@ -32,7 +32,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Sequence
 
@@ -127,6 +127,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not pdb.is_file():
         parser.error(f"structure {pdb} does not exist")
     groups = os.environ.get("FOLDX_GROUPS", "AB,C")
+    # "AB,C" is 1N8Z's own layout (A light, B heavy, C HER2) and nothing below
+    # would notice if the structure disagreed: AnalyseComplex would report the
+    # interaction energy of whichever chains those letters do name, or of
+    # nothing, and the ddG would be a real number for the wrong interface. So
+    # check the letters against the file rather than trusting the default.
+    in_pdb = {
+        line[21]
+        for line in pdb.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.startswith(("ATOM", "HETATM")) and len(line) > 21
+    }
+    named = {c for group in groups.split(",") for c in group.strip() if c.strip()}
+    if not named or len(groups.split(",")) != 2:
+        parser.error(
+            f"FOLDX_GROUPS is {groups!r}; it has to be two comma-separated "
+            f"groups of chain letters, as in AB,C"
+        )
+    unknown = sorted(named - in_pdb)
+    if unknown:
+        parser.error(
+            f"FOLDX_GROUPS={groups} names chain(s) {', '.join(unknown)}, which "
+            f"{pdb} does not have (it has {', '.join(sorted(in_pdb))}). Every "
+            f"ddG would be the wrong interface."
+        )
     runs, workers = int(os.environ.get("FOLDX_RUNS", "3")), int(os.environ.get("FOLDX_WORKERS", "4"))
     if runs < 1 or workers < 1:
         parser.error("FOLDX_RUNS and FOLDX_WORKERS must be at least 1")
@@ -135,21 +158,64 @@ def main(argv: Sequence[str] | None = None) -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(dir=args.out_dir, prefix="work_"))
     jobs = [(Path(binary).resolve(), pdb.resolve(), vid, muts, runs, groups, scratch) for vid, muts in candidates.items()]
-    print(f"foldx: {len(jobs)} candidates on {pdb.name}, {runs} run(s) each, {workers} workers", flush=True)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        rows = list(pool.map(score_candidate, jobs))
+    # Resumable, and incremental on purpose. This used to collect every row with
+    # pool.map and write foldx.csv once at the end, so an interrupted run - a
+    # stopped VM, a dropped connection, Ctrl-C - threw away every candidate it
+    # had already paid for. At 7 FoldX invocations per candidate and several
+    # minutes each, that is hours. Rows are now appended as they finish and
+    # candidates already in foldx.csv are skipped, so a re-run continues instead
+    # of restarting.
+    fields = ["variant_id", "ddg", "ddg_fold", "n_runs"]
+    out_csv = args.out_dir / "foldx.csv"
+    scored_already: dict[str, dict] = {}
+    if out_csv.is_file():
+        with out_csv.open(newline="") as handle:
+            scored_already = {
+                row["variant_id"]: row
+                for row in csv.DictReader(handle)
+                if row.get("variant_id")
+            }
+    pending = [job for job in jobs if job[2] not in scored_already]
+    print(
+        f"foldx: {len(pending)} candidates on {pdb.name}, {runs} run(s) each, "
+        f"{workers} workers"
+        + (f"; {len(scored_already)} already scored, skipping" if scored_already else ""),
+        flush=True,
+    )
+
+    failed: list[dict] = []
+    completed = 0
+    handle = out_csv.open("a" if scored_already else "w", newline="")
+    try:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        if not scored_already:
+            writer.writeheader()
+            handle.flush()
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(score_candidate, job): job[2] for job in pending}
+            for finished in as_completed(futures):
+                row = finished.result()
+                if "ddg" in row:
+                    writer.writerow({key: row[key] for key in fields})
+                    handle.flush()  # the point of the exercise: survive a kill
+                    completed += 1
+                else:
+                    failed.append(row)
+                # A progress line, because an 800-candidate block was otherwise
+                # silent for hours with no way to tell how far it had got.
+                print(
+                    f"foldx: {completed + len(failed)}/{len(pending)} "
+                    f"({completed} scored, {len(failed)} failed)",
+                    flush=True,
+                )
+    finally:
+        handle.close()
     shutil.rmtree(scratch, ignore_errors=True)
 
-    done = [r for r in rows if "ddg" in r]
-    failed = [r for r in rows if "error" in r]
-    with (args.out_dir / "foldx.csv").open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["variant_id", "ddg", "ddg_fold", "n_runs"])
-        writer.writeheader()
-        writer.writerows(done)
-    print(f"foldx: {len(done)} scored, {len(failed)} failed", flush=True)
+    print(f"foldx: {completed} scored this run, {len(failed)} failed, {len(scored_already)} reused", flush=True)
     for row in failed[:10]:
         print(f"  failed {row['variant_id']}: {row['error']}", file=sys.stderr)
-    return 0 if done else 1
+    return 0 if (completed or scored_already) else 1
 
 
 if __name__ == "__main__":

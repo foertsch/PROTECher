@@ -13,7 +13,7 @@ def load_summaries(reports_dir: Path | str, exclude: str | None = None) -> list[
     summaries = []
     for path in sorted(Path(reports_dir).glob("*/summary.json")):
         try:
-            summary = json.loads(path.read_text())
+            summary = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         if summary.get("run_id") != exclude:

@@ -1,0 +1,30 @@
+evidence_id,source,label,format,direction,n_mutations,evidence,assay,variant_id,multi
+TZM-056,adapt2017,H:D102F,Fab,1,1,4.2x fold improvement,SPR; batch-matched parent normalization,B:D102F,False
+TZM-058,adapt2017,H:D102H,Fab,1,1,3.3x fold improvement,SPR; batch-matched parent normalization,B:D102H,False
+TZM-057,adapt2017,H:D102K,Fab,1,1,1.9x fold improvement,SPR; batch-matched parent normalization,B:D102K,False
+TZM-059,adapt2017,H:D102M,Fab,1,1,2.2x fold improvement,SPR; batch-matched parent normalization,B:D102M,False
+TZM-019,moon2016,H:D102W,IgG,1,1,KD 0.11 vs parent 0.48 nM,SPR,B:D102W,False
+TZM-054,adapt2017,H:D31K,Fab,1,1,3.2x fold improvement,SPR; batch-matched parent normalization,B:D31K,False
+TZM-055,adapt2017,H:D31M,Fab,1,1,1.5x fold improvement,SPR; batch-matched parent normalization,B:D31M,False
+TZM-053,adapt2017,H:D31R,Fab,1,1,2.8x fold improvement,SPR; batch-matched parent normalization,B:D31R,False
+TZM-060,adapt2017,L:D28K,Fab,1,1,2.4x fold improvement,SPR; batch-matched parent normalization,A:D28K,False
+TZM-061,adapt2017,L:D28R,Fab,1,1,1.7x fold improvement,SPR; batch-matched parent normalization,A:D28R,False
+TZM-064,adapt2017,H:D31K+H:D102F,Fab,1,2,7.3x fold improvement,SPR; batch-matched parent normalization,B:D31K+B:D102F,True
+TZM-067,adapt2017,H:D31K+H:D102H,Fab,1,2,6.9x fold improvement,SPR; batch-matched parent normalization,B:D31K+B:D102H,True
+TZM-069,adapt2017,H:D31K+H:D102M,Fab,1,2,5.8x fold improvement,SPR; batch-matched parent normalization,B:D31K+B:D102M,True
+TZM-066,adapt2017,H:D31M+H:D102F,Fab,1,2,8.1x fold improvement,SPR; batch-matched parent normalization,B:D31M+B:D102F,True
+TZM-065,adapt2017,H:D31R+H:D102F,Fab,1,2,9.2x fold improvement,SPR; batch-matched parent normalization,B:D31R+B:D102F,True
+TZM-068,adapt2017,H:D31R+H:D102H,Fab,1,2,6.3x fold improvement,SPR; batch-matched parent normalization,B:D31R+B:D102H,True
+TZM-070,adapt2017,H:D31R+H:D102M,Fab,1,2,6.0x fold improvement,SPR; batch-matched parent normalization,B:D31R+B:D102M,True
+TZM-073,adapt2017,H:D31K+H:D102F+L:D28K,Fab,1,3,31.8x fold improvement,SPR; batch-matched parent normalization,A:D28K+B:D31K+B:D102F,True
+TZM-071,adapt2017,H:D31K+H:D102F+L:D28R,Fab,1,3,23.7x fold improvement,SPR; batch-matched parent normalization,A:D28R+B:D31K+B:D102F,True
+TZM-074,adapt2017,H:D31M+H:D102F+L:D28K,Fab,1,3,20.3x fold improvement,SPR; batch-matched parent normalization,A:D28K+B:D31M+B:D102F,True
+TZM-072,adapt2017,H:D31M+H:D102F+L:D28R,Fab,1,3,17.2x fold improvement,SPR; batch-matched parent normalization,A:D28R+B:D31M+B:D102F,True
+TZM-004,literature,L:R66G,scFv,0,1,KD 4.8 vs parent 2.0 nM,,A:R66G,False
+TZM-062,literature,L:S50F,Fab,0,1,fold 0.3,,A:S50F,False
+TZM-063,literature,L:S50W,Fab,0,1,fold 0.5,,A:S50W,False
+TZM-009,literature,L:V33I+L:R66G,scFv,0,2,KD 5.2 vs parent 2.0 nM,,A:V33I+A:R66G,True
+TZM-006,literature,L:V33L+L:R66G,scFv,0,2,KD 4.9 vs parent 2.0 nM,,A:V33L+A:R66G,True
+TZM-024,literature,H:G100H+H:D102V+H:F104M,IgG,0,3,KD 1.12 vs parent 0.48 nM,,B:G100H+B:D102V+B:F104M,True
+TZM-043,literature,L:T93I+L:P95N+L:P96I,IgG,0,3,KD 0.79 vs parent 0.48 nM,,A:T93I+A:P95N+A:P96I,True
+TZM-047,literature,H:D102W+H:M107F+H:D108A+H:Y109L+L:T93Q+L:P96A+L:T97S,IgG,0,7,KD 1.05 vs parent 0.48 nM,,A:T93Q+A:P96A+A:T97S+B:D102W+B:M107F+B:D108A+B:Y109L,True

@@ -53,7 +53,14 @@ freeze_filter "$FREEZE" | VIRTUAL_ENV="$VENV" uv pip install -r -
 step "this package, editable, so the adapters are importable here too"
 # The freeze's `-e file:///scratch/foertsch/protecher` line is what the filter
 # drops; this is that line, pointed at this clone instead.
-VIRTUAL_ENV="$VENV" uv pip install -e "$REPO_ROOT"
+#
+# --no-deps, and that is the whole point of a verbatim replay: this package asks
+# for numpy>=1.26, which resolves to 2.5 and breaks numba ("Numba needs NumPy
+# 2.1 or less"), so `boltz` then fails at import - while every check this script
+# used to run still passed, because none of them imported it. The freeze already
+# supplies every dependency at the version the final ranking came from, so there
+# is nothing left here to resolve.
+VIRTUAL_ENV="$VENV" uv pip install -e "$REPO_ROOT" --no-deps
 
 step "checking torch sees the GPU"
 # The point of this environment. A CPU-only torch build resolves without
@@ -70,8 +77,26 @@ if not torch.cuda.is_available():
 print(f"{torch.cuda.device_count()} device(s): {torch.cuda.get_device_name(0)}", file=sys.stderr)
 PY
 
-step "the boltz entry point"
+step "the boltz entry point, and that it imports"
 [ -x "$VENV/bin/boltz" ] || die "no boltz entry point in $VENV/bin"
+# An executable on disk is not the same as a tool that runs. numba, rdkit and
+# cuequivariance all sit between that entry point and a fold, and numba pins
+# numpy hard - so this imports boltz for real. Checking only for the file is
+# how a "Boltz-2 is built" was once printed over an environment where
+# `boltz predict` died before it read its input.
+"$VENV/bin/python" - <<'CHECK' || die "boltz does not import in $VENV, so no fold can run there. Compare the installed numpy and numba with docs/cluster_freezes/freeze_venv-boltz.txt: an editable install of this package without --no-deps is what moves them."
+import sys
+from importlib.metadata import version
+
+import boltz  # noqa: F401
+import numba
+import numpy
+
+print(
+    f"boltz {version('boltz')} with numpy {numpy.__version__}, numba {numba.__version__}",
+    file=sys.stderr,
+)
+CHECK
 say "$VENV/bin/boltz"
 
 report "Boltz-2" \

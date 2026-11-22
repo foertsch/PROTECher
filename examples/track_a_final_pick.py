@@ -28,7 +28,7 @@ from typing import Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from track_a_chem_rank import rank_weighted  # noqa: E402
+from track_a_chem_rank import check_score_correlations, rank_weighted  # noqa: E402
 
 GROUP_SCORE = "ipSAE + chemistry"
 GROUP_CHEM = "chemistry"
@@ -58,6 +58,7 @@ def pick(rows: list[dict], variants: dict[str, str], chem_weight: float = 0.15, 
          band_sd: float = 2.0, min_different: int = 2) -> tuple[list[dict], dict]:
     """The picks in order (score group first), and the parent's band: mean, SD and the floor the chemistry picks must clear."""
     ranked, band = rank_weighted(rows, chem_weight, band_sd)
+    check_score_correlations(ranked)        # the picks come off `score`, so its inputs are checked here too
     floor = band["parent_mean"] - band_sd * band["parent_sd"]
     for o in ranked:
         o["variant_id"] = variants.get(o["name"], "")

@@ -24,7 +24,7 @@ Three things hold the pieces together:
 
 | Env | GPU | Python | What for |
 |---|---|---|---|
-| `env_a` | no | 3.12 | this package, the tests, the sequence-only scorers, every table and plot. No torch at all |
+| `core` | no | 3.12 | this package, the tests, the sequence-only scorers, every table and plot. CPU torch, for the scorers and nothing else |
 | `foldx` | no | n/a | the physics ddG baseline. A licensed binary, not a pip install |
 | `boltz` | **yes** | 3.12 | Boltz-2. The folds the final ranking's ipSAE and interface metrics are computed from |
 | `antifold` | **yes** | 3.13 | AntiFold, for the evidence funnel's veto, plus AbLang2 in the same environment |
@@ -39,6 +39,36 @@ to a ranking.
 | `dockq` | no | 3.12 | DockQ, for the ground-truth half of `design_pipeline.metrics` |
 | `chai` | yes | 3.12 | Chai-1, as a second opinion against Boltz-2. See the caveat below |
 
+### The default scorer is in `core`, and has to be
+
+`DEFAULT_SCORERS` is `("ablang2",)`, so `ablang2` is in preflight's
+`DEFAULT_CAMPAIGN` and decides its exit status. [routes.py](../design_pipeline/routes.py)
+puts it in `core` and declares no `env_var` — `tests/test_route_drift.py` forbids
+one for a `core` route — and `AbLang2MaskedLM._load` imports `ablang2` in
+process. Those three facts together mean `core` has to hold it: there is no path
+by which it can be reached elsewhere, the way `antifold` and `boltz` are.
+
+This document used to say `core` had "no torch at all", and
+`provision/core.sh` asserted it with `uv pip list | grep torch` while
+`provision/antifold.sh` installed `ablang2` into the *AntiFold* environment. The
+scorer was therefore in a venv nothing reached it from, and preflight in a
+freshly provisioned `core` exited 1 on the only row it gates on. INSTALL.md's
+`core` row — "this package, `ablang2`, `antiberty`, `transformers` + `torch`,
+`fair-esm`, `anarci`" — was right all along; the script and this file were the
+drift.
+
+`core.sh` now installs the `plm` extra with `--torch-backend=cpu`, pinning
+`ablang2==0.2.1` to the version [freeze_antifold.txt](cluster_freezes/freeze_antifold.txt)
+measured so the two copies cannot diverge, and asserts the constraint as what it
+actually is: a fresh interpreter importing `design_pipeline` must not pull in
+`torch` or `jax`. That is a property of the lazy imports in
+`adapters/_plm.py`, not of the package list, and `tests/test_steps.py` asks it
+the same way.
+
+`antifold.sh` keeps its own `ablang2`, because
+[freeze_antifold.txt](cluster_freezes/freeze_antifold.txt) records it and the
+freeze is the measurement. `core` is where a campaign reaches it.
+
 **Dropped.** `protenix` and the LigandMPNN environment are not provisioned.
 Both served de novo design, which this project is not doing. Their adapters,
 routes and extras stay in the package — `routes.py` describes what the code can
@@ -48,11 +78,11 @@ calls them.
 
 Chai-1 is kept in the manifest, with its freeze, as a drop-in alternative to
 Boltz-2. Nothing requires it. Note the asymmetry: the Boltz adapter shells out
-to the `boltz` binary, so it can be driven from Env A by path, while the Chai
+to the `boltz` binary, so it can be driven from `core` by path, while the Chai
 adapter calls `run_inference` **in process** (the CLI drops the PAE matrix, and
 `pae_interaction` needs it). Chai therefore has to be driven from inside its own
 environment; `DESIGN_PIPELINE_CHAI` is a preflight probe only and does not make
-the adapter reachable from Env A. That is the one place where the "same variable
+the adapter reachable from `core`. That is the one place where the "same variable
 the adapter reads" rule in `routes.Route` cannot hold today.
 
 ## What forces each separation
@@ -60,21 +90,21 @@ the adapter reads" rule in `routes.Route` cannot hold today.
 Written as constraints, because a constraint survives a version bump and a pin
 does not. The scripts below install against these, not against the freezes.
 
-| Env | The conflict | Why Env A cannot absorb it |
+| Env | The conflict | Why `core` cannot absorb it |
 |---|---|---|
-| `boltz` | `boltz[cuda]` brings torch 2.15 plus a mixed CUDA 12/13 `nvidia-*` wheel set | Env A has no torch on purpose: importing `design_pipeline` must not import a model |
-| `antifold` | needs **Python >= 3.13**; Env A is 3.12 | a different interpreter is a different environment, full stop |
+| `boltz` | `boltz[cuda]` brings torch 2.15 plus a mixed CUDA 12/13 `nvidia-*` wheel set | `core`'s torch is the CPU build the sequence-only scorers run on; this is a different resolve, and importing `design_pipeline` must still import no model |
+| `antifold` | needs **Python >= 3.13**; `core` is 3.12 | a different interpreter is a different environment, full stop |
 | `antifold` (PyPI route, not used) | `pip install antifold` pins `biotite==0.38` against this package's `biotite>=2.0` | `ResolutionImpossible`, recorded verbatim in [INSTALL.md](../INSTALL.md) |
 | `thermompnn` | its `environment.yaml` is Python 3.10 with `pytorch-cuda 11.7` | two majors of CUDA behind everything else here |
 | `chai` | `chai_lab` pins torch 2.6 against boltz's 2.15 | the two folding models pin torch against each other, so they cannot share |
-| `esm_env` | `transformers` 5.x plus its own torch | shares nothing with Env A, which has no torch |
-| `dockq` | brings biopython, which nothing in this package imports | would be dead weight in Env A, and DockQ is wrapped not reimplemented |
+| `esm_env` | `transformers` 5.x plus its own CUDA torch | `core`'s torch is the CPU build; ESM-1v on a GPU is its own resolve |
+| `dockq` | brings biopython, which nothing in this package imports | would be dead weight in `core`, and DockQ is wrapped not reimplemented |
 | `foldx` | a licensed binary | not a Python package at all |
 | `gearbind` (container, not an env) | TorchDrug pins Python <= 3.10 and an old torch | the one conflict a second *environment* cannot fix, since nothing in it can share a process with us |
 
 ### A note on `biotite==0.38`
 
-The constraint that *forces* AntiFold out of Env A is `biotite==0.38`, which
+The constraint that *forces* AntiFold out of `core` is `biotite==0.38`, which
 every published PyPI release of AntiFold pins. The install we actually use is
 **not** that one: it is the GitHub source at 0.4.0 or later, which drops the
 biotite pin and sits happily next to `biotite 2.0.0` — which is what
@@ -101,7 +131,7 @@ provision/boltz.sh --cuda cu128
 
 `--cuda` accepts `auto` (the default; uv detects the driver), `cpu`, or a
 `cuXXX` moniker, and is passed to uv as `--torch-backend`. The CPU-only
-environments (`env_a`, `dockq`, `foldx`) accept the flag and ignore it, so a
+environments (`core`, `dockq`, `foldx`) accept the flag and ignore it, so a
 driver script can pass one value to all of them.
 
 ### The Boltz exception
@@ -138,14 +168,48 @@ FoldX is a licensed download and nothing here can fetch it. What the script does
 is validate an unpacked copy, because every FoldX failure we have had was a
 layout problem rather than an install problem.
 
-`provision/foldx.sh --zip ~/Downloads/foldx5_Linux_0.zip` unpacks into
+### Getting it
+
+1. Register at <https://foldxsuite.crg.eu/>. The academic licence is free; the
+   account has to exist before anything is downloadable, and the licence is
+   issued against it.
+2. Download **FoldX 5 for Linux**. That is the whole of it: there is no pip
+   package, no conda recipe and no container we have.
+3. Keep the zip wherever you like - `tools/foldx/` is gitignored if you want it
+   in the tree, and the repository root is not. The script reads it from
+   wherever you point `--zip`; it never needs to live in the project.
+
+**The filename moves between releases**, so the script globs `foldx*` rather
+than matching a name: the cluster's copy was `foldx5_Linux_0.zip`, and the one
+downloaded on 2026-11-21 is `foldx_Linux_1.zip` (32.5 MB). Inside, at the top
+level, that zip holds
+
+| | |
+|---|---|
+| `foldx_20270131` | the binary, 87 MB, with its licence expiry in the name |
+| `molecules/` | 15 files of rotamer data, read by a path relative to the binary |
+| `yasaraPlugin.zip` | the YASARA plugin. Nothing here uses it |
+
+Both layouts have shipped - everything at the top level, or everything one
+directory down - and the script lifts the nested case, so either is fine.
+
+`provision/foldx.sh --zip ~/Downloads/foldx_Linux_1.zip` unpacks into
 `tools/foldx/` (gitignored) so that the binary and `molecules/` end up
 **siblings**, then checks three things:
 
 1. the binary exists and is executable (`chmod +x` if not),
 2. `molecules/` is beside it, not nested a level down — FoldX reads its rotamer
    data by relative path and fails obscurely when it is not,
-3. `--version` runs and exits 0.
+3. `--help` runs and exits 0.
+
+Check 3 was `--version` until 2026-11-21, when it failed on a working
+`foldx_20270131`: FoldX 5's own option parser treats `--version` as an option
+that *requires an argument*, so it prints its banner and then `the required
+argument for option '--version' is missing` and exits 255. A bare invocation
+exits 255 too (`No pdbs for the run found`), and so does `-version`. `--help` is
+the one invocation that exits 0 without being handed a structure, which is all
+this check can honestly ask: whether FoldX can actually score is a question only
+a real PDB answers.
 
 It prints the `export FOLDX_BINARY=...` line to add to the environment, and the
 two further variables the adapter reads (`DESIGN_PIPELINE_FOLDX_PDB`,
@@ -154,8 +218,9 @@ two further variables the adapter reads (`DESIGN_PIPELINE_FOLDX_PDB`,
 ### The expiry warning
 
 Academic FoldX licences are time-limited and the build is stamped with its
-expiry in the filename: the copy in `~/tools/foldx/` is `foldx_20261231`, i.e.
-31 December 2026. `design_pipeline.preflight` now parses that date out of
+expiry in the filename: the cluster's copy is `foldx_20261231`, i.e. 31
+December 2026, and the one installed on the Nebius box from the 2026-11-21
+download is `foldx_20270131`, i.e. 31 January 2027. `design_pipeline.preflight` now parses that date out of
 `FOLDX_BINARY` and warns when it is inside 30 days or already past. It is a
 warning, not a failure: the date is a filename convention, not something the
 binary reports, so a renamed binary must not break preflight. A rename simply
@@ -165,7 +230,7 @@ means no warning.
 
 | Prerequisite | State | What it blocks |
 |---|---|---|
-| FoldX licensed download (`foldx5_Linux_0.zip`) | **held.** `~/tools/foldx/` on the cluster's shared home, which is the only path that survived the scratch clear | the `foldx` scorer |
+| FoldX licensed download (the Linux zip) | **held.** Register at <https://foldxsuite.crg.eu/> and download FoldX 5 for Linux; the free academic licence is issued against the account. The cluster's `foldx5_Linux_0.zip` is in `~/tools/foldx/` on the shared home, the only path that survived the scratch clear | the `foldx` scorer |
 | OAS frequency table (`DESIGN_PIPELINE_OAS_TABLE`) | **does not exist, and never did** | the `consensus` scorer |
 
 The OAS table was never committed (`git log --all --diff-filter=A` over the
@@ -227,7 +292,7 @@ location its variable names. Sizes measured on the node.
 | Boltz-2 (`boltz2_conf.ckpt`, `boltz2_aff.ckpt`, `mols.tar`) | 6.3 GB | `BOLTZ_CACHE` | first `boltz predict` |
 | Chai-1 (`models_v2/`, traced ESM-2, conformers) | 6.9 GB | `CHAI_DOWNLOADS_DIR` | first `run_inference` |
 | AntiFold `model.pt` | 567 MB | `ANTIFOLD_SRC` (`src/models/`) | first use; `weights=` reuses a download |
-| AbLang2 paired weights | 179 MB | — (inside the venv) | first use |
+| AbLang2 paired weights | 179 MB | — (inside whichever venv imports it) | first use |
 | ESM-IF1 `esm_if1_gvp4_t16_142M_UR50.pt` | 142 M params | `TORCH_HOME` | `torch.hub` |
 | ESM-1v (`facebook/esm1v_t33_650M_UR90S_1`) | 650 M params | `HF_HOME` | Hugging Face |
 
@@ -237,7 +302,7 @@ adapter raises on a relative value rather than letting it fail inside the tool.
 ## The route contract, and the test that enforces it
 
 A tool in another environment cannot be imported from this one. So for any route
-that does not live in Env A, the only probe that can succeed from outside it is
+that does not live in `core`, the only probe that can succeed from outside it is
 "has the path been configured" — `importlib.util.find_spec` asks *this*
 interpreter about a package that is deliberately not in it and always answers
 no. The reasoning was already written in
@@ -245,7 +310,7 @@ no. The reasoning was already written in
 such route.
 
 Nine routes previously declared `module` or `executable` only and so were
-probed, wrongly, against Env A's interpreter: `chai`, `chai1`, `boltz`,
+probed, wrongly, against `core`'s interpreter: `chai`, `chai1`, `boltz`,
 `boltz2`, `protenix`, `colabfold`, `protein_mpnn`, `ligand_mpnn`,
 `soluble_mpnn`. Concretely, `boltz` ran the entire final screen and preflight on
 the node would still have printed `import boltz failed`. Each now declares an
@@ -263,7 +328,7 @@ the node would still have printed `import boltz failed`. Each now declares an
 | `DESIGN_PIPELINE_FOLDX` | the python that runs `adapters/_foldx_score.py` | `foldx` |
 
 `tests/test_route_drift.py` is what keeps this from rotting: every route whose
-environment is not Env A and not bundled must declare an `env_var`, and setting
+environment is not `core` and not bundled must declare an `env_var`, and setting
 that variable must make `resolve()` return true and cite it. It fails on the
 pre-change tree for exactly those nine routes.
 
@@ -323,11 +388,11 @@ node, and nothing in this repository can reach the cluster anyway.
 ## Running it
 
 ```bash
-provision/env_a.sh
+provision/core.sh
 ```
 
 ```bash
-provision/foldx.sh --zip ~/Downloads/foldx5_Linux_0.zip
+provision/foldx.sh --zip ~/Downloads/foldx_Linux_1.zip
 ```
 
 ```bash
@@ -338,7 +403,7 @@ provision/boltz.sh
 provision/antifold.sh --cuda cu128
 ```
 
-Then, from Env A, with the variables from the scripts' closing `export` lines in
+Then, from `core`, with the variables from the scripts' closing `export` lines in
 the environment:
 
 ```bash
@@ -346,5 +411,5 @@ python -m design_pipeline.preflight
 ```
 
 Every required row should read `yes`. A row marked `B` that does not resolve
-inside Env A means its `DESIGN_PIPELINE_*` variable is unset, not that the tool
+inside `core` means its `DESIGN_PIPELINE_*` variable is unset, not that the tool
 is missing.

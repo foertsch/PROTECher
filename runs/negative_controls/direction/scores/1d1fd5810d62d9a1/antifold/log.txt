@@ -1,0 +1,9 @@
+[2026-11-20 23:26:45,844] Running inverse folding on PDB/CIFs ...
+[2026-11-20 23:26:45,845] IMGT renumbering with ANARCII (antibody model) to /home/kira/protecher/runs/negative_controls/direction/scores/1d1fd5810d62d9a1/antifold/imgt_numbered
+[2026-11-20 23:26:46,359] 1N8Z chain A: IMGT renumbered (K)
+[2026-11-20 23:26:46,359] 1N8Z chain B: IMGT renumbered (H)
+[2026-11-20 23:26:47,413] Loaded model to cpu.
+[2026-11-20 23:26:47,414] Reading in (1) PDBs from DataFrame
+[2026-11-20 23:26:47,608] Predicting batch 1/1: PDBs 1-1 out of 1 total
+[2026-11-20 23:26:49,048] Saving 1 CSVs to /home/kira/protecher/runs/negative_controls/direction/scores/1d1fd5810d62d9a1/antifold
+[2026-11-20 23:26:49,050] Writing 1N8Z_BA per-residue log probs CSV to /home/kira/protecher/runs/negative_controls/direction/scores/1d1fd5810d62d9a1/antifold/1N8Z_BA.csv

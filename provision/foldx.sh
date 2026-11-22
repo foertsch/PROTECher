@@ -12,11 +12,17 @@
 
 usage() {
   cat >&2 <<'USAGE'
-provision/foldx.sh --zip <path to foldx5_Linux_0.zip> [options]
+provision/foldx.sh --zip <path to the FoldX Linux zip> [options]
+
+Get the zip from https://foldxsuite.crg.eu/ - register first (the academic
+licence is free), then download FoldX 5 for Linux. The filename moves between
+releases (foldx5_Linux_0.zip, foldx_Linux_1.zip, ...), which is why the binary
+is located by glob rather than by name.
 
 Unpacks the licensed FoldX zip into tools/foldx/ (gitignored) so the binary and
 molecules/ are siblings, then checks that the binary is executable, molecules/
-is beside it, and --version runs.
+is beside it, and --help runs (the only invocation FoldX 5 exits 0 on
+without a structure).
 
   --zip <path>   the licensed download. Required. Nothing here can fetch it.
 
@@ -29,7 +35,7 @@ parse_args "$@"
 
 DEST="$TOOLS/foldx"
 
-[ -n "$ZIP" ] || { usage; die "--zip is required: FoldX is a licensed download and this script cannot fetch it. On the cluster the zip is in ~/tools/foldx/foldx5_Linux_0.zip."; }
+[ -n "$ZIP" ] || { usage; die "--zip is required: FoldX is a licensed download and this script cannot fetch it. Register at https://foldxsuite.crg.eu/ and download FoldX 5 for Linux. On the cluster the zip is already in ~/tools/foldx/foldx5_Linux_0.zip."; }
 [ -f "$ZIP" ] || die "$ZIP does not exist"
 need unzip "Install it, or unpack the zip by hand into $DEST."
 
@@ -78,11 +84,19 @@ count="$(find "$DEST/molecules" -maxdepth 1 -type f | wc -l | tr -d ' ')"
 [ "$count" -gt 0 ] || die "$DEST/molecules exists but is empty"
 say "ok, $count files"
 
-step "check 3/3: --version runs"
+step "check 3/3: the binary runs"
 # Run from $DEST, which is how the adapter runs it, so that a relative-path
 # problem surfaces here rather than mid-campaign.
-if ! ( cd "$DEST" && "$BINARY" --version >/dev/null 2>&1 ); then
-  die "$BINARY --version did not exit 0. Run it by hand from $DEST to see what it says; a licence file in the wrong place and a binary built for another libc both land here."
+#
+# --help, because it is the only invocation that exits 0 without a PDB. Measured
+# on foldx_20270131: `--version` is an option its parser says REQUIRES an
+# argument (255), `-version` is 255, and a bare run is 255 too - "No pdbs for
+# the run found". This check used to use --version and therefore failed on a
+# working binary. --help still catches what it is here for: a binary built for
+# another libc, or one that cannot start at all. Whether FoldX can actually
+# score is a question only a real PDB answers, and that is the campaign's job.
+if ! ( cd "$DEST" && "$BINARY" --help >/dev/null 2>&1 ); then
+  die "$BINARY --help did not exit 0 when run from $DEST. Run it by hand there to see what it says; a binary built for another libc lands here."
 fi
 say "ok"
 

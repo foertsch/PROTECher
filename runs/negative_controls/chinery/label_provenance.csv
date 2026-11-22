@@ -1,0 +1,5 @@
+column,p,auc,n_fitted,n_unfittable
+source_capture_RU,0.4280794192188435,0.4703277821834523,156,97
+source_fit_residual_sd,,,156,0
+source_yield_ug,0.7357282337665587,0.48734469997356594,156,97
+source_purity_percent,0.801494130778399,0.49748876553000265,156,97

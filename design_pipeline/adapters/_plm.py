@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
 from ..containers import make_id
-from ..matrices import from_position_mapping, score_candidates
+from ..matrices import check_vocabulary, from_position_mapping, score_candidates
 from ..designs import Design
 from ..errors import MissingDependencyError
 from ..structures import AMINO_ACIDS, chain_sequence
@@ -115,6 +115,10 @@ class MaskedMarginalScorer:
                 chain,
                 self.backend.log_probs(chains, chain, sorted(set(positions))),
                 chains[chain],
+                # Every backend here checks its own vocabulary against the
+                # alphabet first, so a missing residue at a position it did
+                # answer for is a bug and not an abstention.
+                require_full_rows=True,
             )
             for chain, positions in needed.items()
         }
@@ -160,11 +164,23 @@ def _chains(
     from ..structures import chain_ids
 
     present = set(chain_ids(structure))
-    chosen = (
-        list(antibody_chains)
-        if antibody_chains
-        else sorted(mutated | (set(PairedChains) & present))
-    )
+    if antibody_chains:
+        chosen = list(antibody_chains)
+    else:
+        chosen = sorted(mutated | (set(PairedChains) & present))
+        # The order of this dict is the order a paired model reads the chains
+        # in, and sorting is not that order: on 1N8Z it puts the light chain
+        # ('A') before the heavy one ('B'). Where the ids are H and L, sorting
+        # happens to be heavy-first and PairedChains pins it anyway. Where they
+        # are not, there is nothing here that knows which is which, so this
+        # refuses rather than guessing - the bug AbLang2's `order` used to hide.
+        if len(chosen) > 1 and not (set(PairedChains) & set(chosen)):
+            raise ValueError(
+                f"chains {', '.join(chosen)} are not named H and L, so nothing "
+                f"here can tell which is the heavy chain, and a paired model "
+                f"reads them in the order they arrive. Pass "
+                f"antibody_chains=[heavy, light] explicitly."
+            )
     return {chain: chain_sequence(structure, chain) for chain in chosen}
 
 
@@ -204,10 +220,25 @@ class HuggingFaceMaskedLM:
         # Compare to None, not `or -1`: ESM's cls id is 0, which `or` skips.
         cls_id = tokenizer.cls_token_id
         offset = 1 if cls_id is not None and int(ids[0, 0]) == int(cls_id) else 0
-        vocabulary = {
-            residue: tokenizer.convert_tokens_to_ids(residue)
-            for residue in AMINO_ACIDS
-        }
+        # The column-axis guard. `convert_tokens_to_ids` answers with the
+        # *unknown* id for a token it does not have, so a residue this model
+        # lacks would come back as a real id pointing at the wrong
+        # distribution; `reserved` is what turns that into an error.
+        vocabulary = check_vocabulary(
+            self.model_id,
+            {
+                residue: tokenizer.convert_tokens_to_ids(residue)
+                for residue in AMINO_ACIDS
+            },
+            # getattr, because a tokenizer is only required to have the ids it
+            # uses: a stub or a model without a pad token has neither.
+            reserved={
+                "unknown": getattr(tokenizer, "unk_token_id", None),
+                "mask": getattr(tokenizer, "mask_token_id", None),
+                "padding": getattr(tokenizer, "pad_token_id", None),
+                "cls": cls_id,
+            },
+        )
 
         found: dict[int, Mapping[str, float]] = {}
         with torch.no_grad():
@@ -229,7 +260,6 @@ class HuggingFaceMaskedLM:
                     found[position] = {
                         residue: float(logp[token])
                         for residue, token in vocabulary.items()
-                        if token is not None
                     }
         return found
 
@@ -258,12 +288,30 @@ class AbLang2MaskedLM:
     protein model has not, and which no structure-based scorer knows about at
     all.
 
-    AbLang2 takes the pair as a single '|'-separated string, so the light chain
-    conditions the heavy one. Its own API is called through
-    `mode="likelihood"`, which returns per-position logits over its vocabulary.
+    AbLang2 takes the pair as TWO strings - `model([[heavy, light]])` - and does
+    its own formatting: `add_extra_tokens` builds `f"<{heavy}>|<{light}>"`, with
+    the empty `<>` dropped when one chain is absent. Handing it the joined
+    string instead raises `ValueError: not enough values to unpack (expected 2,
+    got 1)` from `heavy, light = seq`, which is what this adapter used to do, and
+    which crashed any campaign that reached `ablang2` - the default scorer.
+
+    That formatting also fixes the row layout of `mode="likelihood"`, which
+    returns per-position logits over the 26-token vocabulary. Measured on
+    ablang2 0.2.1 with a 120-residue heavy and a 107-residue light chain: 232
+    rows, i.e. `len(heavy) + len(light) + 5`, laid out as
+
+        0            `<`
+        1 .. nH      the heavy residues, so heavy position i is row i
+        nH+1         `>`
+        nH+2         `|`
+        nH+3         `<`
+        nH+4 ..      the light residues, so light position j is row nH+3+j
+        last         `>`
+
+    so the offset before a chain is one token for its own `<`, plus
+    `len(chain) + 4` for every chain ahead of it.
     """
 
-    chain_separator: str = "|"
     device: str | None = None
 
     def log_probs(
@@ -274,12 +322,31 @@ class AbLang2MaskedLM:
     ) -> Mapping[int, Mapping[str, float]]:
 
         model = self._load()
-        order = [c for c in PairedChains if c in sequences] or sorted(sequences)
+        # The first chain of `order` is the one AbLang2 reads as the heavy one:
+        # its tokenizer does `heavy, light = seq` and builds
+        # f"<{heavy}>|<{light}>". So the fallback is the caller's own order -
+        # `_chains` preserves `antibody_chains`, which the pipeline passes as
+        # [heavy, light] - and NOT `sorted(sequences)`. Sorting put 1N8Z's
+        # light chain ('A') ahead of its heavy chain ('B') and fed the model a
+        # light chain in the heavy slot; `before` is computed from the same
+        # order, so the rows stayed self-consistent and an offset sweep could
+        # not see it. Measured on the 1N8Z variable domains: CDR wt-argmax
+        # 14.9% with the chains swapped against 27.7% with them the right way
+        # round.
+        order = [c for c in PairedChains if c in sequences] or list(sequences)
         if chain not in order:
             raise KeyError(f"chain {chain!r} is not among {', '.join(order)}")
-        # Where the mutated chain starts inside the joined string, so a
-        # position in the chain becomes a position in what the model saw.
-        before = sum(len(sequences[c]) + 1 for c in order[: order.index(chain)])
+        # Where the mutated chain starts among the rows the model returns, so a
+        # position in the chain becomes a row index. The 4 is AbLang2's own
+        # punctuation around each chain (`>`, `|`, `<`) and the leading 1 is this
+        # chain's own `<`; see the layout in the class docstring. This was
+        # `len + 1` with no leading offset, which read the row before the one it
+        # wanted for the heavy chain and three rows early for the light.
+        before = 1 + sum(len(sequences[c]) + 4 for c in order[: order.index(chain)])
+
+        # The column-axis guard, once rather than per position: AbLang2's own
+        # residue-to-token mapping has to cover the twenty with distinct ids.
+        vocabulary = check_vocabulary("ablang2", model.tokenizer.aa_to_token)
 
         found: dict[int, dict[str, float]] = {}
         for position in positions:
@@ -287,15 +354,17 @@ class AbLang2MaskedLM:
             residues = list(masked[chain])
             residues[position - 1] = "*"  # AbLang2's mask token
             masked[chain] = "".join(residues)
-            joined = self.chain_separator.join(masked[c] for c in order)
-            logits = model([joined], mode="likelihood")[0]
+            # A list of two strings, never a joined one. AbLang2 drops the
+            # empty `<>` itself, so an absent second chain is "".
+            pair = [masked[c] for c in order]
+            if len(pair) == 1:
+                pair = [pair[0], ""]
+            logits = model([pair], mode="likelihood")[0]
             row = logits[before + position - 1]
-            vocabulary = model.tokenizer.aa_to_token
             total = _logsumexp([float(v) for v in row])
             found[position] = {
                 residue: float(row[vocabulary[residue]]) - total
                 for residue in AMINO_ACIDS
-                if residue in vocabulary
             }
         return found
 
@@ -317,8 +386,25 @@ class AntiBertyMaskedLM:
 
     Kept because two antibody priors trained on different data disagree in
     useful ways, and because AntiBERTy installs more easily than AbLang2 on
-    some machines. `fill_masks` is the API that gives per-position
-    distributions.
+    some machines.
+
+    Per-position distributions come from the masked LM behind the runner, not
+    from `fill_masks`. In antiberty 1.0.0 `fill_masks(sequences)` returns the
+    completed strings and accepts no `return_logits`, so the call this adapter
+    used to make raised `TypeError: AntiBERTyRunner.fill_masks() got an
+    unexpected keyword argument 'return_logits'` and killed any campaign that
+    reached this scorer. Its other public methods are no help either:
+    `pseudo_log_likelihood` is one scalar per sequence and `embed` returns
+    hidden states.
+
+    `AntiBERTyRunner` does expose `.model` (a BERT masked LM, head included)
+    and `.tokenizer`, which is all this needs. Two details of that tokenizer,
+    both measured on antiberty 1.0.0: `vocab` is a LIST, so residue ids come
+    from the `token_to_id` mapping rather than from indexing `vocab` (what this
+    adapter used to do, which would have raised even with logits in hand), and
+    `[CLS]` occupies row 0, so chain position i is row i. At that offset the
+    wild-type residue ranks first at 4 of 6 sampled positions of 1N8Z's heavy
+    chain, against 5.67 and 13.67 mean rank for the neighbouring offsets.
     """
 
     device: str | None = None
@@ -330,20 +416,35 @@ class AntiBertyMaskedLM:
         positions: Sequence[int],
     ) -> Mapping[int, Mapping[str, float]]:
 
+        import torch
+
         runner = self._load()
+        model, tokenizer = runner.model, runner.tokenizer
+        # The column-axis guard. `token_to_id` is the model's own mapping;
+        # `vocab` next to it is a LIST in antiberty 1.0.0, which is why nothing
+        # here indexes that.
+        vocabulary = check_vocabulary("antiberty", tokenizer.token_to_id)
         sequence = sequences[chain]
         found: dict[int, dict[str, float]] = {}
         for position in positions:
             residues = list(sequence)
             residues[position - 1] = "_"  # AntiBERTy's mask character
-            logits = runner.fill_masks(["".join(residues)], return_logits=True)[0]
-            row = logits[position - 1]
+            encoded = tokenizer(["".join(residues)])
+            inputs = {
+                key: value.to(model.device)
+                for key, value in encoded.items()
+                if hasattr(value, "to")
+            }
+            with torch.no_grad():
+                output = model(**inputs)
+            logits = getattr(output, "prediction_logits", None)
+            if logits is None:
+                logits = getattr(output, "logits", output[0])
+            row = logits[0, position]  # [CLS] is row 0, so position i is row i
             total = _logsumexp([float(v) for v in row])
-            vocabulary = runner.tokenizer.vocab
             found[position] = {
                 residue: float(row[vocabulary[residue]]) - total
                 for residue in AMINO_ACIDS
-                if residue in vocabulary
             }
         return found
 

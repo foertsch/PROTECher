@@ -3,7 +3,10 @@ name = "design-pipeline"
 version = "0.2.0"
 description = "Antibody affinity maturation: get a structure, score every variant, gate, pair."
 readme = "README.md"
-requires-python = ">=3.11"
+# 3.12, not the 3.11 this said until a walkthrough on a fresh box hit it:
+# biotite 2.0 requires 3.12, so a 3.11 environment cannot resolve this
+# package at all ("your requirements are unsatisfiable").
+requires-python = ">=3.12"
 # Every run needs these and they are all light. No torch, no jax: importing
 # design_pipeline must not import a model.
 dependencies = [
@@ -40,7 +43,14 @@ metrics = ["DockQ>=2.1"]
 # Plots: notebooks/01_structure_pipeline_validation.ipynb, and
 # `harness.magnitude_plot`. Both skip their plots rather than failing when
 # matplotlib is absent; the numbers behind them need nothing extra.
-notebooks = ["matplotlib>=3.8", "jupyterlab>=4"]
+#
+# biopython is here for one cell of 03_negative_controls.ipynb, which reads
+# BLOSUM62 out of `Bio.Align.substitution_matrices` to test whether the
+# language models' ranking is just exchangeability. The cell skips itself with
+# a note when biopython is absent, so this is a convenience rather than a
+# requirement - and the comment on `metrics` above is still true: nothing in
+# `design_pipeline` imports biopython, only a notebook does.
+notebooks = ["matplotlib>=3.8", "jupyterlab>=4", "biopython>=1.80"]
 # Scorers and gate checks are NOT all containers any more: most install with pip
 # or conda into one of the two environments described in INSTALL.md, and
 # design_pipeline/routes.py is the machine-readable table of which goes where.

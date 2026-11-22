@@ -123,11 +123,31 @@ def history_table(history: list[dict], summary: dict) -> str:
     return _table(header, rows)
 
 
-def _scatter(scored: pd.DataFrame, config: Config, parent: pd.Series | None, path: Path) -> bool:
-    import matplotlib
+def _pyplot():
+    """pyplot with the Agg backend, or None when matplotlib is not installed.
+
+    matplotlib is the `notebooks` extra, so a `[dev]` install has none. The
+    report is built out of the tables and the figures are an addition to it, so
+    a missing matplotlib leaves the image out - the same answer `_scatter` and
+    `_compare` already give when the columns they need are absent. It used to
+    raise ModuleNotFoundError here instead, which failed five tests on exactly
+    the install INSTALL.md section 2 tells you to make.
+    """
+    try:
+        import matplotlib
+    except ImportError:
+        return None
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+
+    return plt
+
+
+def _scatter(scored: pd.DataFrame, config: Config, parent: pd.Series | None, path: Path) -> bool:
+    plt = _pyplot()
+    if plt is None:
+        return False
 
     x, y = config.x, config.y
     if x not in scored or y not in scored or x == y:
@@ -157,10 +177,9 @@ def _scatter(scored: pd.DataFrame, config: Config, parent: pd.Series | None, pat
 
 
 def _compare(scored: pd.DataFrame, config: Config, history: list[dict], summary: dict, path: Path) -> bool:
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+    plt = _pyplot()
+    if plt is None:
+        return False
 
     key = config.x
     if key not in scored:
@@ -218,7 +237,13 @@ def write_report(
     summary["files"] = files
 
     _sorted(scored, config, metrics).head(max_rows).to_csv(out_dir / "designs.csv", index=False, float_format="%.5g")
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=1))
+    # encoding spelled out on every write in this package: the report carries
+    # U+2717 and U+00B7, and `write_text` without it uses the platform default,
+    # which is cp1252 on Windows - building a report there raised
+    # UnicodeEncodeError and took five tests with it. Linux never saw it because
+    # PEP 538 coerces the C locale to UTF-8, so this is a Windows-only break on
+    # exactly the machine INSTALL.md section 2 tells you to run the suite on.
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
 
     parts = [
         f"# Run {summary['run_id']}" + (f": {summary['label']}" if summary["label"] else ""),
@@ -247,5 +272,5 @@ def write_report(
         "## Files",
         "`designs.csv` (one row per design with every score and grade), `summary.json` (numbers for the leaderboard).",
     ]
-    (out_dir / "report.md").write_text("\n\n".join(parts) + "\n")
+    (out_dir / "report.md").write_text("\n\n".join(parts) + "\n", encoding="utf-8")
     return line

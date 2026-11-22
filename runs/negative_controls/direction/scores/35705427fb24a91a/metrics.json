@@ -1,0 +1,6 @@
+{
+ "candidates": 29,
+ "capped": false,
+ "model_name": "antifold_seq",
+ "per_variant": true
+}

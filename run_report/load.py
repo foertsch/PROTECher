@@ -35,7 +35,7 @@ def load_designs(roots: Iterable[Path | str]) -> pd.DataFrame:
     rows: dict[str, dict] = {}
     for marker in find_manifests(roots):
         try:
-            records = json.loads(marker.read_text())
+            records = json.loads(marker.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         if not isinstance(records, list):

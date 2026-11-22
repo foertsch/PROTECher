@@ -14,15 +14,20 @@ resolves through this table, and an adapter whose route is not satisfied raises
 `verified` means someone ran the check and recorded the result on VERIFIED_ON -
 not that it is likely, nor that the tool's README implies it. An unchecked
 route says so, and an adapter with no route at all says that too rather than
-guessing one. The target is two environments and two containers, not ten
-images:
+guessing one. The target is eight environments and two containers, not ten
+images. provision/manifest.toml is the inventory and names each one; `env`
+below is the coarser question of how a route is REACHED, not which venv holds
+it, which is why two labels cover eight environments:
 
-    Env A   the default campaign: this package, the sequence-only scorers
-            (ablang2, antiberty, esm1v, esm2_650m), fair-esm and anarci.
-            Build and test this first.
+    Env A   reachable by import from this interpreter - the default campaign:
+            this package, the sequence-only scorers (ablang2, antiberty,
+            esm1v, esm2_650m), fair-esm and anarci. Exactly one environment,
+            `core` in the manifest. Build and test this first.
     Env B   whatever will not resolve into A - AntiFold, ThermoMPNN, and the
             co-folding models, which pin torch against each other. Reached by
-            path (executable= / DESIGN_PIPELINE_*), not by import.
+            path (executable= / DESIGN_PIPELINE_*), not by import. Not one
+            environment: the manifest splits it into antifold, thermompnn,
+            boltz, chai and esm_env, because their pins forced five.
     GearBind    a container because its TorchDrug stack pins Python <=3.10 and
             an old torch: the one conflict that a second environment cannot
             fix, since nothing in it can share a process with us.
@@ -31,9 +36,9 @@ images:
 
 AntiFold is in Env B rather than A despite being a default scorer: it pins
 biotite==0.38 against this package's biotite>=2.0, and pip calls that
-combination ResolutionImpossible. Whether AntiFold and ThermoMPNN can share
-one Env B is NOT established - their pins may force two - but that is a
-configuration choice, since each is reached by its own path.
+combination ResolutionImpossible. It does not share an environment with
+ThermoMPNN: AntiFold needs Python 3.13 and ThermoMPNN's environment.yaml is
+3.10. That costs nothing here, since each is reached by its own path.
 
 Nothing here invokes a tool. This module is data plus two probes, so importing
 it stays free and `preflight` can read it with no GPU and no network.
@@ -53,8 +58,24 @@ from .errors import MissingRuntimeError
 VERIFIED_ON = "2026-10-30"
 """The day the verified routes below were last checked."""
 
-ENV_A = "A"
-ENV_B = "B"
+# How a route is REACHED, not which environment holds it. These values print:
+# preflight's `env` column and `require`'s error text are both `route.env`
+# verbatim, so a reader sees them next to docs that name environments. They
+# used to be "A" and "B", which no document and no manifest key had used since
+# `env_a` became `core` and Env B turned out to be five environments.
+#
+# ENV_A is `core` in provision/manifest.toml and nothing else - one letter for
+# one environment, so the value can simply be its name. ENV_B is not one
+# environment, and no name would be honest, so it says how the route is reached
+# instead: antifold, thermompnn, boltz, chai and esm_env are all reached by
+# path, and which one is the manifest's question, not this table's.
+#
+# The CONSTANT names stay ENV_A / ENV_B. Every comparison in the package and
+# the suite goes through them (`tests/test_route_drift.py` has
+# `BY_PATH = (routes.ENV_B,)`), so renaming the values is a one-line change per
+# constant, while renaming the constants is not and buys nothing.
+ENV_A = "core"
+ENV_B = "by path"
 CONTAINER = "container"
 MANUAL = "manual"
 BUILTIN = "-"
@@ -506,9 +527,15 @@ def require(name: str) -> None:
             f"set REGISTRY[{name!r}] to an adapter that runs it"
         )
     else:
+        # `route.env` is a bracketed tag rather than "environment {env}",
+        # because the five values are not all environments and no preposition
+        # fits them all: "environment core" reads, "environment by path" and
+        # "environment manual" do not. The bracket also matches preflight's
+        # `env` column, which prints the same value bare, so an error and the
+        # table are recognisably about the same thing.
         detail = (
             f"{name} is not installed. Verified route (checked "
-            f"{VERIFIED_ON}), environment {route.env}: {route.how}"
+            f"{VERIFIED_ON}) [{route.env}]: {route.how}"
         )
     note = f". Note: {route.note}" if route is not None and route.note else ""
     raise MissingRuntimeError(
