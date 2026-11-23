@@ -7,7 +7,9 @@ to help, excludes what was measured to hurt, and uses the models only as a veto.
     1 evidence    modules of substitutions from the evidence table: measured gains (ADAPT 2017, Moon 2016) and stability changes
                   that kept binding (Ng 2025), each with its measured fold
     2 exclusions  no hotspot position, no substitution that only appears in a variant that lost binding, no light-chain CDR3
-                  change, no new cysteine or N-glycosylation sequon
+                  change, and no liability by `design_pipeline.adapters._gates.liability_reasons`: a new N-glycosylation
+                  sequon, deamidation, isomerization or fragmentation motif, an introduced free cysteine, or a
+                  substitution at one of the four paired cysteines, which would break a disulfide
     3 assemble    every combination of modules with 5 to 10 substitutions; priority = summed log10 measured fold (additive, which
                   the ADAPT panel supports within its error and which is untested across studies)
     4 veto        AntiFold `antifold_seq` and AbLang2 pseudo-log-likelihood of each set against a null of random sets of the same
@@ -147,19 +149,6 @@ def load_modules(rows: Sequence[dict]) -> tuple[list[Module], set[Mutation]]:
 
 
 # ------------------------------------------------------------------------------------------------------- assembly
-def liabilities(parent: str, variant: str) -> dict[str, bool]:
-    """New unpaired cysteine or N-glycosylation sequon excludes a design; a new NG or DG motif only flags it."""
-    def count(seq: str, pattern: str) -> int:
-        return len(re.findall(f"(?={pattern})", seq))
-
-    return {
-        "new_cysteine": variant.count("C") != parent.count("C"),
-        "new_nglyc_sequon": count(variant, r"N[^P][ST]") > count(parent, r"N[^P][ST]"),
-        "new_NG": count(variant, "NG") > count(parent, "NG"),
-        "new_DG": count(variant, "DG") > count(parent, "DG"),
-    }
-
-
 def assemble(modules: Sequence[Module], losses: set[Mutation], min_size: int = 5, max_size: int = 10) -> list[dict]:
     """Every combination of one H3 module, optional H1 and L1 modules and optional framework modules."""
     by_site = {s: [m for m in modules if m.site == s] for s in ("H1", "L1", "H3", "FW")}
@@ -291,7 +280,9 @@ class Clock:
 def design(args: argparse.Namespace) -> int:
     import pandas as pd
     from design_pipeline import scfv
+    from design_pipeline.adapters._gates import liability_reasons
     from design_pipeline.combine import pick_designs
+    from design_pipeline.structures import disulfide_positions
     from design_pipeline.variants import _rows_for, write_table
 
     out = Path(args.out)
@@ -315,13 +306,29 @@ def design(args: argparse.Namespace) -> int:
         keep = []
         from collections import Counter
         excluded: Counter = Counter()
+        # The liability rules live in design_pipeline.adapters._gates, where the
+        # `liabilities` gate check reads them too. This script used to carry its own
+        # narrower copy: no D[GSD], no DP, NG instead of N[GST], and a cysteine count
+        # comparison that blamed a removal on an addition. The library's disulfide
+        # positions come off the crystal rather than being hardcoded, so this follows
+        # the parent; the constant-domain pairs are dropped because a substitution
+        # here is numbered within the variable domain.
+        domains = {HEAVY: parent_vh, LIGHT: parent_vl}
+        paired = {
+            chain: tuple(p for p in positions if p <= len(domains[chain]))
+            for chain, positions in disulfide_positions(Path(args.structure_pdb)).items()
+            if chain in domains
+        }
+        print(f"  disulfide positions from {args.structure_pdb}: " + ", ".join(
+            f"{chain}:{'+'.join(map(str, positions))}" for chain, positions in sorted(paired.items())))
         for s in sets:
             seq = scfv.apply_id(layout, variant_id(s["subs"]))
-            flags = liabilities(parent, seq)
-            s["flags"] = ",".join(k for k, v in flags.items() if v)
+            reasons = liability_reasons(domains, s["subs"], paired)
+            s["flags"] = ",".join(reasons)
             s["sequence"] = seq
-            if flags["new_cysteine"] or flags["new_nglyc_sequon"]:
-                excluded[("new_cysteine" if flags["new_cysteine"] else "new_nglyc_sequon", s["modules"].count("Ng VH-S85N") > 0)] += 1
+            if reasons:
+                label = reasons[0].split(":", 1)[1].split("@")[0]
+                excluded[(label, s["modules"].count("Ng VH-S85N") > 0)] += 1
                 continue
             keep.append(s)
         print(f"  {len(sets)} sets of 5 to 10 substitutions assembled, {len(keep)} after the liability exclusions")

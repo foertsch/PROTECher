@@ -75,6 +75,7 @@ REGISTRY: dict[str, ModelAdapter] = {
     "dummy_sequence_scorer": adapters.dummy_sequence_scorer,
     # Step 4, gate.
     "liabilities": adapters.liabilities,
+    "foldx_floor": adapters.foldx_floor,
     "thermompnn": adapters.thermompnn,
     "aggrescan3d": adapters.aggrescan3d,
     "netsolp": adapters.netsolp,

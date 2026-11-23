@@ -189,6 +189,54 @@ def ca_coordinates(structure: Path, chain: str) -> np.ndarray:
     return coords
 
 
+DISULFIDE_SG = 2.5
+"""SG to SG distance, in angstroms, at or below which two cysteines are a disulfide.
+
+A modelled disulfide sits at 2.0 to 2.1 (in 1N8Z: VL C23-C88 at 2.09, VH C22-C96 at
+2.04), and two free thiols that happen to be near each other sit well above. Little
+falls in between, so the exact cut is not a tuning parameter.
+"""
+
+
+def disulfide_positions(structure: Path) -> dict[str, tuple[int, ...]]:
+    """Chain -> 1-based positions of the cysteines whose SG is in a disulfide.
+
+    The positions index `chain_sequence`, which is what `position` in the variant
+    table means. Pairs across chains count, because an interchain disulfide is as
+    real as an intrachain one.
+
+    Read from the coordinates rather than assumed from the sequence, so it follows
+    the parent: a different complex reports its own pairs. A structure with no side
+    chains - a backbone-only prediction, the CA-only files the tests write - has no
+    SG atoms and so reports nothing, which is the honest answer rather than a guess.
+    """
+    import biotite.structure as struc
+
+    atoms = load(Path(structure))
+    atoms = atoms[struc.filter_amino_acids(atoms)]
+    sites: list[tuple[str, int, np.ndarray]] = []
+    for chain in dict.fromkeys(str(c) for c in atoms.chain_id):
+        sub = atoms[atoms.chain_id == chain]
+        starts = list(struc.get_residue_starts(sub))
+        bounds = starts + [sub.array_length()]
+        for position, (begin, end) in enumerate(zip(bounds, bounds[1:]), start=1):
+            residue = sub[begin:end]
+            if str(residue.res_name[0]).upper() != "CYS":
+                continue
+            sulfur = residue[residue.atom_name == "SG"]
+            if sulfur.array_length():
+                sites.append((chain, position, sulfur.coord[0]))
+    paired: dict[str, list[int]] = {}
+    for index, (chain, position, coord) in enumerate(sites):
+        for other, (_chain, _position, partner) in enumerate(sites):
+            if other == index:
+                continue
+            if float(np.linalg.norm(coord - partner)) <= DISULFIDE_SG:
+                paired.setdefault(chain, []).append(position)
+                break
+    return {chain: tuple(sorted(positions)) for chain, positions in paired.items()}
+
+
 def read_fasta(path: Path) -> list[str]:
     """Every chain in a FASTA someone else wrote, in file order.
 

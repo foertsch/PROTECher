@@ -265,7 +265,22 @@ ROUTES: Mapping[str, Route] = {
         ),
     ),
     "liabilities": Route(
-        step=GATE, env=BUILTIN, how="bundled: sequence regex", verified=True
+        step=GATE,
+        env=BUILTIN,
+        how="bundled: sequence regex, plus the disulfide map read off the structure",
+        verified=True,
+    ),
+    "foldx_floor": Route(
+        step=GATE,
+        env=BUILTIN,
+        how="bundled: a threshold on the foldx.csv the `foldx` scorer wrote",
+        verified=True,
+        note=(
+            "Needs no FoldX of its own - it reads the score step's table, which "
+            "is why it is bundled while `foldx` itself is MANUAL and licensed. "
+            "Pass table=<foldx.csv>; a candidate missing from it passes, with "
+            "the silence recorded in the reason."
+        ),
     ),
     # ---------------------------------------------------------- The one container
     "gearbind": Route(

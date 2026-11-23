@@ -16,6 +16,7 @@ from ._dummy import DummyBackbones, DummyFold, DummySequences, DummyStructures
 from ._gates import (
     aggrescan3d,
     dummy_check,
+    foldx_floor,
     liabilities,
     netsolp,
     thermompnn,
@@ -83,6 +84,7 @@ __all__ = [
     "dummy_sequence_scorer",
     # step 4, gate
     "liabilities",
+    "foldx_floor",
     "thermompnn",
     "aggrescan3d",
     "netsolp",
