@@ -83,16 +83,44 @@ def test_assembly_never_returns_sets_below_the_minimum():
     assert run.assemble(modules, losses, min_size=11, max_size=12) == []
 
 
-def test_liabilities_flag_new_cysteines_sequons_and_ng_dg():
-    parent = VH
-    assert not any(run.liabilities(parent, parent).values())
-    new_cys = parent[:10] + "C" + parent[11:]
-    assert run.liabilities(parent, new_cys)["new_cysteine"]
-    i = parent.index("TISADTSKNTAY")                      # make N-X-T: the second residue after an inserted N
-    sequon = parent[: i + 1] + "N" + "A" + "T" + parent[i + 4:]
-    assert run.liabilities(parent, sequon)["new_nglyc_sequon"]
-    assert run.liabilities("AAAAA", "AANGA")["new_NG"]
-    assert run.liabilities("AAAAA", "AADGA")["new_DG"]
+def test_the_exclusion_rules_come_from_the_library_not_a_copy():
+    """This script used to carry its own narrower liability rules. It calls
+    `_gates.liability_reasons` now, so the test is that the library answers for
+    the cases the copy used to own - plus the two it got wrong."""
+    from design_pipeline.adapters._gates import liability_reasons
+
+    assert not hasattr(run, "liabilities"), "the reimplementation is gone"
+    domains = {"B": VH, "A": VL}
+    paired = {"B": (22, 96), "A": (23, 88)}
+
+    # an introduced cysteine: a free thiol, as before
+    assert liability_reasons(domains, [("B", 11, VH[10], "C")], paired) == [
+        "B:free_cysteine@11"
+    ]
+    # a new N-x-T sequon: as before
+    i = VH.index("TISADTSKNTAY")
+    # N at i+2 with T at i+4 is a sequon, and the residue after the new N is an
+    # S, so the same substitution is a deamidation site as well. Both are named.
+    assert liability_reasons(domains, [("B", i + 2, VH[i + 1], "N"), ("B", i + 4, VH[i + 3], "T")], paired) == [
+        f"B:deamidation@{i + 2}",
+        f"B:n_glycosylation@{i + 2}",
+    ]
+    # the two the copy got wrong: a substitution AT a paired cysteine breaks a
+    # disulfide and is named as such, and it is not called an added cysteine
+    assert liability_reasons(domains, [("B", 22, "C", "A")], paired) == [
+        "B:disulfide_break@22"
+    ]
+    # adding one cysteine and removing another: equal counts, which the copy's
+    # count comparison passed
+    assert liability_reasons(domains, [("B", 22, "C", "A"), ("B", 11, VH[10], "C")], paired) == [
+        "B:disulfide_break@22",
+        "B:free_cysteine@11",
+    ]
+    # and the two rules the copy did not have at all. VL starts with D, so one
+    # substitution at position 2 makes the motif and nothing else.
+    assert VL[0] == "D"
+    assert liability_reasons(domains, [("A", 2, VL[1], "G")], paired) == ["A:isomerization@1"]
+    assert liability_reasons(domains, [("A", 2, VL[1], "P")], paired) == ["A:fragmentation@1"]
 
 
 def test_random_sets_are_valid_substitutions_over_the_variable_domains():

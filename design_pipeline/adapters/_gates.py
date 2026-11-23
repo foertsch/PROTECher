@@ -10,6 +10,12 @@ reliable signal is a hard sequence liability. The thresholds below are
 deliberately loose, they are first guesses rather than calibrated numbers, and
 every one of them is overridable per call
 (`gate(..., threshold=2.0)`) so the harness can settle them with data.
+
+Two of the checks here are not predictors at all and are not loose:
+`liabilities` is a hard sequence rule plus the disulfide map read off the
+structure, and `foldx_floor` is a threshold on a physics ddG another step
+already computed. Neither is a model score, so neither is hedged the way the
+container checks are.
 """
 
 from __future__ import annotations
@@ -25,8 +31,15 @@ from ..containers import ContainerAdapter, ProcessAdapter, make_id
 from ..designs import Design
 from ..errors import MissingRuntimeError
 from ..routes import require
-from ..structures import chain_residue_ids, chain_sequence
-from ._tabular import CANDIDATES, CHECKS, read_candidates, read_tool_table, write_checks
+from ..structures import chain_residue_ids, chain_sequence, disulfide_positions
+from ._tabular import (
+    CANDIDATES,
+    CHECKS,
+    Mutation,
+    read_candidates,
+    read_tool_table,
+    write_checks,
+)
 
 # Each entry is (label, pattern). The pattern is wrapped in a lookahead when it
 # is searched, so overlapping occurrences are all found: NNS holds both an
@@ -57,20 +70,83 @@ def new_motifs(wild: str, mutant: str) -> list[str]:
     return found
 
 
+def liability_reasons(
+    chains: Mapping[str, str],
+    mutations: Sequence[Mutation],
+    paired_cysteines: Mapping[str, Sequence[int]] | None = None,
+) -> list[str]:
+    """Every liability a candidate introduces, sorted, as "chain:label@position".
+
+    One implementation of the rules, because there were two: this one and a
+    narrower copy in `examples/track_a_run.py` that had no `D[GSD]` and no `DP`
+    rule, used `NG` where this one uses `N[GST]`, and compared cysteine counts
+    instead of positions. Over the 4,313 single substitutions of the
+    trastuzumab scFv the two disagreed on 233 candidates - 158 motifs only this
+    one caught, 75 cysteine calls only the copy made - so the union lives here
+    and the copy calls it.
+
+    `chains` is the parent sequence per chain, 1-based like `position` in the
+    variant table. `paired_cysteines` names the cysteines that are in a
+    disulfide, from `structures.disulfide_positions`; with none given, the
+    `disulfide_break` rule cannot fire, because nothing says which cysteines
+    are paired.
+    """
+    paired = {
+        chain: set(positions)
+        for chain, positions in (paired_cysteines or {}).items()
+    }
+    reasons: list[str] = []
+    for chain in sorted({chain for chain, _, _, _ in mutations}):
+        if chain not in chains:
+            raise KeyError(
+                f"no sequence for chain {chain!r}; "
+                f"got {', '.join(sorted(chains)) or 'none'}"
+            )
+        residues = list(chains[chain])
+        for mut_chain, position, _wt, mut in mutations:
+            if mut_chain == chain:
+                residues[position - 1] = mut
+        reasons += [
+            f"{chain}:{motif}"
+            for motif in new_motifs(chains[chain], "".join(residues))
+        ]
+    # An introduced cysteine has nothing to pair with, so it is a free thiol:
+    # aggregation, and a heterogeneous product.
+    reasons += [
+        f"{chain}:free_cysteine@{position}"
+        for chain, position, _wt, mut in mutations
+        if mut == "C"
+    ]
+    # The other direction, and a rule in its own right rather than something
+    # inferred from a count: a substitution at a cysteine that IS in a
+    # disulfide breaks it. In 1N8Z all four variable-domain cysteines are
+    # paired (VL C23-C88, VH C22-C96), so every one of those substitutions is
+    # a real break. A count comparison blames the removal on an addition, and
+    # misses the candidate that does one of each.
+    reasons += [
+        f"{chain}:disulfide_break@{position}"
+        for chain, position, wt, mut in mutations
+        if wt == "C" and mut != "C" and position in paired.get(chain, ())
+    ]
+    return sorted(reasons)
+
+
 @dataclass(frozen=True)
 class LiabilityCheck:
-    """Pure sequence regex. Zero dependencies, milliseconds, no structure needed
-    beyond the chain sequences the complex already holds.
+    """The sequence rules plus the disulfide map. No dependencies, milliseconds.
 
     Cheap enough to run on the full scan, which is why it is the default check:
-    it catches the mistakes that no amount of binding score makes up for.
+    it catches the mistakes that no amount of binding score makes up for - a new
+    glycosylation sequon, a free thiol, a broken disulfide.
     """
 
     name: str = "liabilities"
     per_variant: bool = False
     requires_structure: bool = False
-    """Reads the chain sequences and never the coordinates, so it is just as
-    valid on a complex whose docking is wrong."""
+    """The sequence rules read the chain sequences and never the coordinates, so
+    they are just as valid on a complex whose docking is wrong. `disulfide_break`
+    reads SG-SG distances, which is a property of a chain's own fold rather than
+    of the pose, and a structure with no side chains reports no pairs at all."""
 
     def run(
         self,
@@ -87,32 +163,18 @@ class LiabilityCheck:
             raise ValueError(f"{self.name} needs the complex as its input")
         structure = inputs[0].path
         wanted = read_candidates(Path(candidates))
-        wild: dict[str, str] = {}
+        wild = {
+            chain: chain_sequence(structure, chain)
+            for chain in sorted(
+                {c for mutations in wanted.values() for c, _, _, _ in mutations}
+            )
+        }
+        paired = disulfide_positions(structure)
 
         rows: list[tuple[str, bool, str]] = []
         for variant_id, mutations in wanted.items():
-            reasons: list[str] = []
-            for chain in sorted({chain for chain, _, _, _ in mutations}):
-                if chain not in wild:
-                    wild[chain] = chain_sequence(structure, chain)
-                residues = list(wild[chain])
-                for mut_chain, position, _wt, mut in mutations:
-                    if mut_chain == chain:
-                        residues[position - 1] = mut
-                reasons += [
-                    f"{chain}:{motif}"
-                    for motif in new_motifs(wild[chain], "".join(residues))
-                ]
-            # An introduced cysteine has nothing to pair with, so it is a free
-            # thiol: aggregation, and a heterogeneous product. Whether an
-            # existing cysteine is in a disulfide is a structure question this
-            # check deliberately does not ask.
-            reasons += [
-                f"{chain}:free_cysteine@{position}"
-                for chain, position, _wt, mut in mutations
-                if mut == "C"
-            ]
-            rows.append((variant_id, not reasons, ", ".join(sorted(reasons))))
+            reasons = liability_reasons(wild, mutations, paired)
+            rows.append((variant_id, not reasons, ", ".join(reasons)))
 
         path = write_checks(output_dir / CHECKS, rows)
         return [
@@ -242,6 +304,83 @@ def check_container(image: str, *, gpu: bool = True) -> ContainerAdapter:
         output_globs=("*.csv",),
         gpu=gpu,
     )
+
+
+@dataclass(frozen=True)
+class TableCheck:
+    """A threshold on one column of a table another step already wrote.
+
+    `ContainerCheck` runs a tool and then thresholds its output. This one skips
+    the running: it takes `table=` and thresholds that. The reason is cost. The
+    one tool behind it, FoldX, is licensed, slow (hours for a few hundred
+    candidates, three runs each) and already run by the `foldx` scorer in step
+    3, which writes exactly the table this reads. Re-running it inside the gate
+    would buy nothing and spend the afternoon.
+
+    `fail_above` says which side of `threshold` is the failure, and
+    `threshold_rows` does the rest, unchanged - including what happens to a
+    candidate the table says nothing about.
+    """
+
+    name: str
+    value_column: str
+    threshold: float
+    fail_above: bool = True
+    per_variant: bool = False
+    """False because reading a row of a CSV is not per-candidate compute: there
+    is nothing here for `max_variants` to cap."""
+    requires_structure: bool = False
+    id_column: str = "variant_id"
+
+    def run(
+        self,
+        inputs: Sequence[Design],
+        output_dir: Path,
+        *,
+        candidates: Path | str | None = None,
+        table: Path | str | Sequence[Path | str] | None = None,
+        extra_args: Sequence[str] | None = None,
+        threshold: float | None = None,
+        id_column: str | None = None,
+        value_column: str | None = None,
+        **kwargs: Any,
+    ) -> list[Design]:
+        if candidates is None:
+            raise ValueError(f"{self.name} needs candidates=<path to {CANDIDATES}>")
+        if table is None:
+            raise ValueError(
+                f"{self.name} needs table=<path to the csv holding "
+                f"{self.value_column!r} per variant_id>, which it thresholds "
+                f"rather than recomputing. For foldx_floor that is the "
+                f"foldx.csv the `foldx` scorer wrote in step 3."
+            )
+        paths = (
+            [Path(table)]
+            if isinstance(table, (str, Path))
+            else [Path(one) for one in table]
+        )
+        missing = [str(one) for one in paths if not one.exists()]
+        if missing:
+            raise FileNotFoundError(
+                f"{self.name}: no such table: {', '.join(missing)}"
+            )
+        limit = self.threshold if threshold is None else float(threshold)
+        column = value_column or self.value_column
+        values = read_tool_table(paths, id_column or self.id_column, column)
+        wanted = read_candidates(Path(candidates))
+
+        rows = threshold_rows(
+            self.name, wanted, values, column, limit, self.fail_above
+        )
+        path = write_checks(output_dir / CHECKS, rows)
+        return [
+            Design(
+                id=make_id(path, output_dir),
+                path=path,
+                parent_id=inputs[0].id if inputs else None,
+                producer=self.name,
+            )
+        ]
 
 
 INFERENCE_SCRIPT = ("analysis", "custom_inference.py")
@@ -489,6 +628,27 @@ aggrescan3d = ContainerCheck(
     fail_above=True,
     per_variant=True,
 )
+# FoldX binding ddG as a gate, in kcal/mol, destabilizing positive: drop what
+# FoldX calls a worse binder than the parent. The one physics check here, and
+# the only one of the five with a measured claim behind it: on the negative
+# control panels FoldX was the single scorer that passed (direction 0.792, CI
+# 0.583-0.958; Chinery 0.716, CI 0.651-0.780), which is why it gates while the
+# model scores only rank.
+#
+# COVERAGE. FoldX runs per candidate on a licensed binary, so the table covers
+# only the candidates someone paid for: in the Track A run, 115 of the 432.
+# A candidate the table says nothing about PASSES, with "foldx_floor: no value"
+# in its reason - `threshold_rows` records the silence rather than reading it
+# as consent. That is the deliberate choice (gate only on confident failures),
+# but it means a run that gates on foldx_floor without first scoring every
+# candidate with `foldx` is a no-op on the unscored ones, and the annotated
+# table is where you see how many. Count them before believing a pass rate.
+foldx_floor = TableCheck(
+    name="foldx_floor",
+    value_column="ddg",
+    threshold=0.0,
+    fail_above=True,
+)
 # Predicted solubility, higher is better, hence fail_above=False.
 netsolp = ContainerCheck(
     name="netsolp",
@@ -548,6 +708,7 @@ dummy_check = DummyCheck()
 
 CHECKS_AVAILABLE: tuple[str, ...] = (
     "liabilities",
+    "foldx_floor",
     "thermompnn",
     "aggrescan3d",
     "netsolp",
@@ -555,4 +716,7 @@ CHECKS_AVAILABLE: tuple[str, ...] = (
 )
 DEFAULT_CHECKS: tuple[str, ...] = ("liabilities",)
 """What `gate` runs when nothing is named: the free one that catches the most
-common own-goal. The container checks are opt-in: name them explicitly."""
+common own-goal. Everything else is opt-in, named explicitly: the container
+checks because they need a container, and `foldx_floor` because it needs the
+FoldX table and would otherwise silently pass every candidate that has no
+value in it."""
