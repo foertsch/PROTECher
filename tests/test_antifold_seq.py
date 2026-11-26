@@ -304,7 +304,9 @@ def test_the_adapter_starts_the_script_by_path_with_the_antifold_interpreter(tmp
     _scorers.antifold_seq.run([structure], out, candidates=candidates, heavy="H", light="L", weights="/w/model.pt")
     command = calls[0]
 
-    assert command[0] == "/envs/antifold/bin/python"  # reached by path, like the matrix scorer
+    # Path, not str: the adapter round-trips the value through pathlib, which writes
+    # the platform separator back out. Reached by path, like the matrix scorer.
+    assert Path(command[0]) == Path("/envs/antifold/bin/python")
     assert command[1] == str(seq.__file__) and Path(command[1]).is_file()
     for flag, value in [("--pdb", str(structure.path)), ("--out_dir", str(out)), ("--mutations_csv", str(candidates)), ("--heavy", "H"), ("--light", "L"), ("--weights", "/w/model.pt")]:
         assert command[command.index(flag) + 1] == value

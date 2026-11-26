@@ -183,12 +183,9 @@ core."""
 
 # ---------------------------------------------------------------- dropped
 
-[dropped.protenix]
-reason = "served de novo design, which this project is not doing"
-freeze = false
-keeps_adapter = true
-keeps_route = true
-env_var = "DESIGN_PIPELINE_PROTENIX"
+# protenix was listed here as dropped-but-kept until 2026-11-25, when its adapter
+# and route were deleted outright. Nothing reaches it any more, so there is no
+# `keeps_adapter` to record. colabfold went the same way and was never listed.
 
 [dropped.mpnn]
 reason = "served de novo design, which this project is not doing"

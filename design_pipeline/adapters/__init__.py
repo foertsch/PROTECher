@@ -1,7 +1,7 @@
 """Adapter instances.
 
 Importing this imports no model: the container adapter is plain data, and the
-pip-backed adapters (MPNN, ColabFold) check for their dependency inside run().
+pip-backed adapters (MPNN) check for their dependency inside run().
 Module names are underscored because the public names here are the adapter
 *instances*.
 """
@@ -11,7 +11,6 @@ from __future__ import annotations
 from ._af3 import alphafold3
 from ._boltz import BoltzAdapter
 from ._chai import ChaiAdapter
-from ._colabfold import ColabFoldAdapter
 from ._dummy import DummyBackbones, DummyFold, DummySequences, DummyStructures
 from ._gates import (
     aggrescan3d,
@@ -24,7 +23,6 @@ from ._gates import (
 from ._mpnn import ligand_mpnn, protein_mpnn, soluble_mpnn
 from ._pdb import dummy_complex, dummy_predictor, pdb_download
 from ._plm import ablang2, antiberty, esm1v, esm2_650m
-from ._protenix import ProtenixAdapter
 from ._rfdiffusion import rfdiffusion
 from ._scorers import (
     abmpnn,
@@ -41,10 +39,8 @@ from ._scorers import (
     rosetta_ddg,
 )
 
-colabfold = ColabFoldAdapter()
 chai = ChaiAdapter()
 boltz = BoltzAdapter()
-protenix = ProtenixAdapter()
 dummy_backbones = DummyBackbones()
 dummy_sequences = DummySequences()
 dummy_structures = DummyStructures()
@@ -52,7 +48,6 @@ dummy_structures = DummyStructures()
 # mixes producers the way a real model list does.
 dummy_chai = DummyFold(producer="dummy_chai")
 dummy_boltz = DummyFold(producer="dummy_boltz")
-dummy_protenix = DummyFold(producer="dummy_protenix")
 
 __all__ = [
     # step 1, structure
@@ -60,8 +55,6 @@ __all__ = [
     "alphafold3",
     "chai",
     "boltz",
-    "protenix",
-    "colabfold",
     "dummy_complex",
     "dummy_predictor",
     # step 3, scoring
@@ -99,5 +92,4 @@ __all__ = [
     "dummy_structures",
     "dummy_chai",
     "dummy_boltz",
-    "dummy_protenix",
 ]

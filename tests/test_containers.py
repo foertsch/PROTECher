@@ -13,7 +13,6 @@ from design_pipeline import (  # type: ignore[attr-defined]
     adapters,
 )
 from design_pipeline import containers, routes
-from design_pipeline.adapters import _colabfold
 from design_pipeline.containers import detect_runtime, format_kwargs
 
 
@@ -203,61 +202,3 @@ def test_silent_failure_is_an_error(tmp_path, monkeypatch, both_runtimes) -> Non
 
     with pytest.raises(containers.RunFailedError):
         adapters.rfdiffusion.run([parent], out, num_designs=1)
-
-
-def test_colabfold_missing_names_the_extra(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(_colabfold.shutil, "which", lambda name: None)
-    fasta = design(tmp_path / "s.fa")
-    with pytest.raises(MissingDependencyError) as exc:
-        _colabfold.ColabFoldAdapter().run([fasta], tmp_path / "out")
-    assert "design-pipeline[colabfold]" in str(exc.value)
-    assert "dummy_structures" in str(exc.value)
-
-
-def test_colabfold_command(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        _colabfold.shutil, "which", lambda name: "/usr/bin/colabfold_batch"
-    )
-    calls: list[list[str]] = []
-    out = tmp_path / "out"
-    out.mkdir()
-
-    def run(cmd):
-        calls.append([str(c) for c in cmd])
-        (out / "s_unrelaxed_rank_001_model_1.pdb").write_text("ATOM\n")
-        (out / "s_scores_rank_001_model_1.json").write_text('{"plddt": [80, 90]}')
-
-    monkeypatch.setattr(_colabfold, "stream", run)
-    fasta = design(tmp_path / "s.fa", id="seq1")
-
-    designs = _colabfold.ColabFoldAdapter().run([fasta], out, recycles=3, seed=7)
-
-    cmd = calls[0]
-    assert cmd[0].endswith("colabfold_batch")
-    # Public MSA server by default; host_url lets a local one be pointed at.
-    assert cmd[cmd.index("--host-url") + 1] == "https://api.colabfold.com"
-    assert cmd[cmd.index("--num-recycle") + 1] == "3"
-    assert cmd[cmd.index("--random-seed") + 1] == "7"
-    assert len(designs) == 1
-    assert designs[0].parent_id == "seq1"
-    assert designs[0].scores["plddt"] == 85.0
-    assert designs[0].meta["scores_json"].endswith("s_scores_rank_001_model_1.json")
-
-
-def test_colabfold_accepts_a_local_msa_server(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(
-        _colabfold.shutil, "which", lambda name: "/usr/bin/colabfold_batch"
-    )
-    calls: list[list[str]] = []
-    out = tmp_path / "out"
-    out.mkdir()
-
-    def run(cmd):
-        calls.append([str(c) for c in cmd])
-        (out / "s_unrelaxed_rank_001.pdb").write_text("ATOM\n")
-
-    monkeypatch.setattr(_colabfold, "stream", run)
-    _colabfold.ColabFoldAdapter().run(
-        [design(tmp_path / "s.fa")], out, host_url="http://localhost:8080"
-    )
-    assert calls[0][calls[0].index("--host-url") + 1] == "http://localhost:8080"

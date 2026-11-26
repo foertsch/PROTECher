@@ -3,6 +3,12 @@ name = "design-pipeline"
 version = "0.2.0"
 description = "Antibody affinity maturation: get a structure, score every variant, gate, pair."
 readme = "README.md"
+# An SPDX expression, not the old `{text = "MIT"}` table: PEP 639 deprecated the
+# table form, and hatchling reads the expression from 1.26 on, which is why
+# build-system below pins a floor. LICENSE also names the third-party tools and
+# data this repository drives but cannot relicense.
+license = "MIT"
+license-files = ["LICENSE"]
 # 3.12, not the 3.11 this said until a walkthrough on a fresh box hit it:
 # biotite 2.0 requires 3.12, so a 3.11 environment cannot resolve this
 # package at all ("your requirements are unsatisfiable").
@@ -68,10 +74,8 @@ notebooks = ["matplotlib>=3.8", "jupyterlab>=4", "biopython>=1.80"]
 chai = ["chai_lab>=0.6,<0.7"]
 # Boltz-2. [cuda] is the tool's own GPU extra.
 boltz = ["boltz[cuda]>=2.2,<3"]
-# Pinned, not ranged: this is the version whose LICENSE and README the model
-# table in README.md reports, and the licensing of the weights is unresolved.
-protenix = ["protenix==2.0.0"]
-colabfold = ["colabfold[alphafold]>=1.5"]
+# protenix and colabfold extras removed 2026-11-25 with their adapters: an extra
+# that installs a model nothing can call is an invitation to install it.
 # ProteinMPNN / LigandMPNN / SolubleMPNN, parameters bundled in the wheel.
 # Heads-up: ligandmpnn 0.1.2 pins numpy==1.23.5, torch==2.2.1 and Python <3.12,
 # which conflicts with biotite's numpy>=2.1. Installing this extra alongside the
@@ -81,7 +85,9 @@ mpnn = ["ligandmpnn>=0.1.2"]
 dev = ["pytest>=8"]
 
 [build-system]
-requires = ["hatchling"]
+# >=1.27, because `license = "MIT"` as an SPDX expression needs PEP 639 support.
+# Unpinned, an older hatchling rejects the [project] table it is handed.
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

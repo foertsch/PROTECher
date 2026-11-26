@@ -69,7 +69,8 @@ the same way.
 [freeze_antifold.txt](cluster_freezes/freeze_antifold.txt) records it and the
 freeze is the measurement. `core` is where a campaign reaches it.
 
-**Dropped.** `protenix` and the LigandMPNN environment are not provisioned.
+**Dropped.** The LigandMPNN environment is not provisioned. `protenix` was
+listed here too until 2026-11-25, when its adapter and route were deleted.
 Both served de novo design, which this project is not doing. Their adapters,
 routes and extras stay in the package — `routes.py` describes what the code can
 reach, `manifest.toml` describes what we build, and those are different
@@ -311,7 +312,7 @@ such route.
 
 Nine routes previously declared `module` or `executable` only and so were
 probed, wrongly, against `core`'s interpreter: `chai`, `chai1`, `boltz`,
-`boltz2`, `protenix`, `colabfold`, `protein_mpnn`, `ligand_mpnn`,
+`boltz2`, `protein_mpnn`, `ligand_mpnn`,
 `soluble_mpnn`. Concretely, `boltz` ran the entire final screen and preflight on
 the node would still have printed `import boltz failed`. Each now declares an
 `env_var`:
@@ -322,8 +323,6 @@ the node would still have printed `import boltz failed`. Each now declares an
 | `DESIGN_PIPELINE_THERMOMPNN` | the ThermoMPNN environment's entry point | `thermompnn` |
 | `DESIGN_PIPELINE_BOLTZ` | that environment's `boltz` binary | `boltz`, `boltz2` |
 | `DESIGN_PIPELINE_CHAI` | the Chai environment's `python` (probe only — see above) | `chai`, `chai1` |
-| `DESIGN_PIPELINE_PROTENIX` | that environment's `protenix` binary | `protenix` |
-| `DESIGN_PIPELINE_COLABFOLD` | that environment's `colabfold_batch` | `colabfold` |
 | `DESIGN_PIPELINE_MPNN` | that environment's `ligandmpnn` | `protein_mpnn`, `ligand_mpnn`, `soluble_mpnn` |
 | `DESIGN_PIPELINE_FOLDX` | the python that runs `adapters/_foldx_score.py` | `foldx` |
 

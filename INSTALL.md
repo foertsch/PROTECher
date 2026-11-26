@@ -58,7 +58,7 @@ needs, so the `core` that `provision/core.sh` builds includes it with a CPU
 torch. On a laptop you can leave it out; `ablang2` is then the one row
 `preflight` reports unresolved.
 The container adapters — every scorer, every gate check, RFdiffusion — add
-**no** Python dependency at all. The model extras `[mpnn]` and `[colabfold]`
+**no** Python dependency at all. The model extra `[mpnn]`
 are heavy and are covered in section 4; install them only if you intend to run
 those models locally.
 
@@ -77,7 +77,7 @@ machine-readable version of the environments themselves.
 | | holds | why |
 |---|---|---|
 | **`core`** | this package, `ablang2`, `antiberty`, `transformers` + `torch`, `fair-esm`, `anarci` | the sequence-only scorers and the whole table/gating path. Build and test this first. |
-| **Env B** | `antifold`, `thermompnn`, and the co-folding models (`chai`, `boltz`, `protenix`, `colabfold`) | each pins torch against the others, and AntiFold pins `biotite==0.38` |
+| **Env B** | `antifold`, `thermompnn`, and the co-folding models (`chai`, `boltz`) | each pins torch against the others, and AntiFold pins `biotite==0.38` |
 | **container** | `gearbind` | TorchDrug pins Python ≤3.10 and an old torch: the one conflict a second environment cannot fix |
 | **container** | `rfdiffusion` | it already had a published image; pinned by digest |
 
@@ -360,20 +360,18 @@ degrades to unconditioned design — plausible sequences, with the ligand contex
 that motivated choosing the model entirely absent. The ligand has to come in on
 the input structure; there is no transplanting helper.
 
-### Chai-1, Boltz-2, Protenix — one extra each, weights download on first run
+### Chai-1 and Boltz-2 — one extra each, weights download on first run
 
 ```bash
 uv pip install -e '.[chai]'      # the default folding model
 uv pip install -e '.[boltz]'     # Boltz-2
-uv pip install -e '.[protenix]'  # Protenix, pinned to 2.0.0
 ```
 
-All three need **Linux and a CUDA GPU**, and Chai-1 additionally needs bfloat16
+Both need **Linux and a CUDA GPU**, and Chai-1 additionally needs bfloat16
 (compute capability 8.0 or newer, i.e. Ampere and later). The adapters check
 this up front and raise `MissingGPUError` naming what is missing, rather than
 failing somewhere inside the model. Licences and MSA requirements are in the
-model table in [README.md](README.md) — read it before using Protenix for
-anything that ships.
+model table in [README.md](README.md).
 
 Each tool keeps its own weights cache; there is deliberately no shared one:
 
@@ -381,9 +379,8 @@ Each tool keeps its own weights cache; there is deliberately no shared one:
 |---|---|---|
 | `chai` | `$CHAI_DOWNLOADS_DIR` | Unset, chai_lab writes into its own installation directory. Set it. |
 | `boltz` | `$BOLTZ_CACHE` (default `~/.boltz`) | Must be absolute. Weights, CCD and the molecule archive are several GB; `boltz predict` fetches what is missing on the first run, and the adapter says so before it starts. |
-| `protenix` | `$PROTENIX_ROOT_DIR` (default `$HOME`) | Checkpoints and CCD data download on first use. |
 
-Two things to know about the arguments:
+One thing to know about the arguments:
 
 - Chai-1 runs **in process** (the adapter imports `chai_lab`, and with it
   torch), because its command line throws away the PAE matrix that
@@ -391,44 +388,9 @@ Two things to know about the arguments:
   `run_inference` arguments as keywords, e.g.
   `get_structure(out, model_name="chai1", antibody_seq=..., antigen_seq=...,
   num_trunk_recycles=5)`.
-- Protenix picks the checkpoint: `checkpoint="protenix_mini_default_v0.5.0"`
-  is much faster at comparable quality, and the `protenix_mini_esm_v0.5.0` /
-  `protenix_mini_ism_v0.5.0` variants need no MSA. Add
-  `use_default_params=True` to get the cycle and step counts a Mini checkpoint
-  was tuned for.
 
 To run step 1 with no GPU and no network, use `dummy_complex`; the de novo
-branch has the fixture folders `dummy_chai`, `dummy_boltz` and
-`dummy_protenix`.
-
-### ColabFold — optional Python extra, weights download on first run
-
-```bash
-uv pip install -e '.[colabfold]'
-```
-
-This one is heavy (it brings jax), which is exactly why it is an extra. The
-adapter shells out to `colabfold_batch`, so after installing, check:
-
-```bash
-colabfold_batch --help
-```
-
-- **Weights**: the AlphaFold2 parameters download automatically on the first
-  prediction and are cached; budget a few GB and a slow first run. See
-  `colabfold_batch --help` for the flag that relocates that cache in your
-  version, and pass it through as shown below.
-- **MSAs**: the public MSA server `https://api.colabfold.com` is the default.
-  It is rate-limited and it means your sequences leave the machine. To point at
-  a local server later, pass `host_url`:
-
-  ```python
-  get_structure(out, model_name="colabfold", antibody_seq=..., antigen_seq=...,
-                host_url="http://localhost:8080")
-  ```
-
-If `colabfold_batch` is not on `PATH`, the pipeline raises
-`MissingDependencyError` naming the extra to install.
+branch has the fixture folders `dummy_chai` and `dummy_boltz`.
 
 ### Scorers and gate checks — routes, not images
 

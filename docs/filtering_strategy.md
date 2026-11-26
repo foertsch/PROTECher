@@ -118,6 +118,61 @@ Cofold each of the top designs against the closest paralogs (for HER2: EGFR, HER
 4. The gate relaxation order and the epitope similarity cutoff (0.4), both starting values.
 5. Who builds the HER2 known-binder reference set, and by when.
 
+## Do not build a hydrophobic-exposure gate — NOT REPRODUCED
+
+Stage 4 above lists "new exposed hydrophobic patches" as a developability filter to add.
+It was tried once, on 2026-11-23, and it fails on this molecule in the direction that
+matters: **it drops the measured winners.** This note exists to stop it being rebuilt,
+not to support any claim.
+
+**NOT REPRODUCED.** The measurement was made in scratch scripts (`q3b.py`, `q3c.py`)
+under the laptop's Windows temp directory during a diagnostics-only pass that was
+instructed to commit nothing. That directory has since been cleaned. No file in this
+repository or on the GPU box holds the script or its output, so nothing below can be
+re-checked, and none of it belongs in a publication. It is recorded here as a decision
+input and nowhere else.
+
+The score, as defined then:
+
+    score(variant) = RSA(position) x (hydrophobic area of mut - hydrophobic area of wt)
+
+so a higher score means more exposed hydrophobic area added, and a gate of the obvious
+shape drops high scorers.
+
+| what was measured | value | population |
+|---|---|---|
+| AUROC, improvement ranked above measured break | **0.637** | BENCHMARK: 21 measured improvements against 8 measured breaks |
+| mean score, measured improvements | 88.4 | BENCHMARK, the 21 improvements |
+| mean score, measured breaks | 42.8 | BENCHMARK, the 8 breaks |
+| corr(RSA, score) | **0.92** | the scored positions |
+| D102F / D102W | 121.3 / 144.0 | BENCHMARK |
+| median over the designs | 124.0 | the 115 Track A designs |
+| designs above D102F / above D102W | 58 / 53 | the 115 Track A designs |
+
+Three reasons this kills the gate:
+
+1. **AUROC 0.637 is in the wrong direction.** The improvements score *higher*, not lower.
+   A gate that drops high scorers drops the variants that were measured to work, and it
+   does so at better than chance - which is worse than a useless filter.
+2. **corr(RSA, score) = 0.92 means the quantity is essentially "is this position
+   exposed".** The hydrophobic-area term barely moves it. The paratope substitutions that
+   work here are at exposed positions by construction, so the gate is a proxy for
+   "is this in the paratope" wearing a developability label.
+3. **The two populations are not comparable, and that is the trap.** 88.4 and 42.8 are
+   means over BENCHMARK variants carrying 1 to 3 substitutions; 124.0 is the median over
+   designs carrying 5 to 7. More substitutions accumulate more hydrophobic area, so the
+   designs sit higher than the benchmark on an axis that has nothing to do with binding.
+   Any absolute threshold set on benchmark variants and applied to the designs would cut
+   most of the pool for having more substitutions. **A threshold on this score is a
+   threshold on substitution count.**
+
+If anyone wants this gate, the prerequisite is a committed script, output under `runs/`,
+and the score computed per population rather than pooled. Until then it stays out of the
+pipeline, and the within-position confound in `docs/article_numbers.md` §1 and §2 - 126
+pairs, a committed script, a persisted interval - is the result that carries this
+argument in public.
+
+
 ## What is already implemented
 
 Written as of 2026-10-30, in `design_pipeline` rather than in `filters/`, because the pipeline turned out to be affinity maturation from a known complex rather than de novo generation:

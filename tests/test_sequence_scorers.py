@@ -219,8 +219,6 @@ def test_the_structure_free_subset_is_one_line() -> None:
     ],
 )
 def test_a_backend_without_its_dependency_names_the_extra(backend) -> None:
-    for module in ("torch", "ablang2", "antiberty"):
-        pytest.importorskip  # noqa: B018
     try:
         import torch  # noqa: F401
 
