@@ -2,10 +2,10 @@
 
 import inspect
 import os
-import stat
 from pathlib import Path
 
 import pytest
+from conftest import write_python_stub
 
 from design_pipeline.adapters._boltz import BoltzAdapter
 from design_pipeline.cache import read_manifest
@@ -14,16 +14,24 @@ from design_pipeline.errors import MissingDependencyError, RunFailedError
 from msa_cache import CacheError, batch, fold_batch, write_batch_inputs
 from test_msa_cache import ANTIGEN, SCFV, boltz_msas, cache, mutate  # noqa: F401  (fixtures)
 
-FAKE_BOLTZ = """#!/usr/bin/env bash
-echo "$@" >> "$BOLTZ_CALLS"
-inputs=$2
-while [ $# -gt 0 ]; do [ "$1" = "--out_dir" ] && out=$2; shift; done
-for f in "$inputs"/*.fasta; do
-  id=$(basename "$f" .fasta)
-  [ "$id" = "${BOLTZ_SKIP:-}" ] && continue
-  mkdir -p "$out/boltz_results_inputs/predictions/$id"
-done
+FAKE_BOLTZ = """import os, pathlib, sys
+args = sys.argv[1:]
+with open(os.environ["BOLTZ_CALLS"], "a") as handle:
+    handle.write(" ".join(args) + "\\n")
+inputs = pathlib.Path(args[1])                      # boltz predict <inputs> ...
+out = next(pathlib.Path(args[i + 1]) for i, a in enumerate(args) if a == "--out_dir")
+skip = os.environ.get("BOLTZ_SKIP", "")
+for fasta in sorted(inputs.glob("*.fasta")):
+    if fasta.stem != skip:
+        (out / "boltz_results_inputs" / "predictions" / fasta.stem).mkdir(parents=True, exist_ok=True)
 """
+"""The fake `boltz`, as its own source.
+
+Python rather than bash: it has to be executable on whatever machine runs the tests,
+and Windows has no shebang. `conftest.write_python_stub` wraps it in a .bat there,
+which `PATH` lookup still finds under the bare name `boltz` because .bat is in
+PATHEXT. Behaviour is the bash version's: record the arguments, then make one empty
+prediction folder per input fasta, skipping the id named by BOLTZ_SKIP."""
 
 
 def sequence_design(directory: Path, design_id: str, scfv: str, antigen: str = ANTIGEN) -> Design:
@@ -48,9 +56,7 @@ def fake_boltz(tmp_path, monkeypatch):
     """A `boltz` on PATH that records its arguments and writes an empty prediction folder per input."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    exe = bin_dir / "boltz"
-    exe.write_text(FAKE_BOLTZ)
-    exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+    write_python_stub(bin_dir / "boltz", FAKE_BOLTZ)
     calls = tmp_path / "calls.txt"
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("BOLTZ_CALLS", str(calls))

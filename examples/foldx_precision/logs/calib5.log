@@ -1,0 +1,11 @@
+START 2026-11-24T19:22:11+00:00 epoch=1795548131 workers=1 runs=3
+PDB /home/kira/protecher/data/structures/1N8Z_fv_trimmed_Repair.pdb
+PDB_SHA256 79ce088822d539a99517770ccb2d4b089ad25778a5529fb6d0e37fe92ddbaba9
+1795548131.366567369 foldx: 5 candidates on 1N8Z_fv_trimmed_Repair.pdb, 3 run(s) each, 1 workers; 115 already scored, skipping
+1795548217.800951565 foldx: 1/5 (1 scored, 0 failed)
+1795548332.799072009 foldx: 2/5 (2 scored, 0 failed)
+1795548431.029013494 foldx: 3/5 (3 scored, 0 failed)
+1795548540.237221771 foldx: 4/5 (4 scored, 0 failed)
+1795548639.444069150 foldx: 5/5 (5 scored, 0 failed)
+1795548639.445756080 foldx: 5 scored this run, 0 failed, 115 reused
+END 2026-11-24T19:30:39+00:00 epoch=1795548639 elapsed_s=508

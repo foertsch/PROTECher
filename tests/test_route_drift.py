@@ -25,7 +25,7 @@ import dataclasses
 
 import pytest
 
-from design_pipeline import routes
+from design_pipeline import cache, routes
 from design_pipeline.registry import REGISTRY
 
 # The nine that declared `module` or `executable` only. Kept as data so that the
@@ -43,6 +43,16 @@ PRE_CHANGE_WITHOUT_A_PATH_PROBE = frozenset(
         "soluble_mpnn",
     }
 )
+
+ROUTES_SINCE_REMOVED = frozenset({"protenix", "colabfold"})
+"""Two of the nine whose routes were deleted outright on 2026-11-25, adapters and
+all, because neither was in provision/manifest.toml.
+
+The nine above are left intact: they record what the check was written against,
+and shrinking that record is how the reconstruction below stops proving anything.
+What changed is only that a table rebuilt from today's ROUTES cannot contain a
+route that no longer exists. The test asserts these two really are absent, so
+re-adding one without a path probe cannot hide inside this subtraction."""
 
 BY_PATH = (routes.ENV_B,)
 """Environments whose tools cannot be imported from here, so the only probe that
@@ -91,14 +101,21 @@ def test_every_env_b_route_can_be_probed_from_outside_its_environment() -> None:
     )
 
 
-def test_the_check_catches_the_nine_routes_it_was_written_for() -> None:
-    """Run the check against the pre-change table: it has to find all nine.
+def test_the_check_catches_the_routes_it_was_written_for() -> None:
+    """Run the check against the pre-change table: it has to find every route of
+    the original nine that still exists.
 
     Without this, the test above passes on an empty rule just as happily as on
     a correct one.
     """
+    assert ROUTES_SINCE_REMOVED.isdisjoint(routes.ROUTES), (
+        "a route listed as removed is back; either restore it to the expected "
+        "set or drop it from ROUTES_SINCE_REMOVED, or this check silently stops "
+        "covering it"
+    )
+
     assert missing_a_path_probe(pre_change_table()) == sorted(
-        PRE_CHANGE_WITHOUT_A_PATH_PROBE
+        PRE_CHANGE_WITHOUT_A_PATH_PROBE - ROUTES_SINCE_REMOVED
     )
 
 
@@ -185,12 +202,19 @@ def test_foldx_is_manual_and_still_reached_by_path() -> None:
     assert route.env_var == "DESIGN_PIPELINE_FOLDX"
 
 
-def test_foldx_needs_env_lists_every_variable_the_adapter_reads() -> None:
-    """All three, because `_foldx_score.py` reads all three.
+def test_foldx_needs_env_lists_every_variable_that_changes_the_numbers() -> None:
+    """`api.py` builds the cache key from `needs_env`, so a variable the adapter
+    reads and that moves a ddG has to be in here or the cache serves one run's
+    numbers for another's.
 
-    `needs_env` listed only FOLDX_BINARY, so preflight never reported
-    DESIGN_PIPELINE_FOLDX_PDB as unset - the one with no sensible default, since
-    it names the structure every ddG is computed against.
+    FOLDX_BINARY, DESIGN_PIPELINE_FOLDX_PDB and DESIGN_PIPELINE_FOLDX were here
+    first, for preflight: the structure variable has no sensible default and went
+    unreported while only FOLDX_BINARY was listed. FOLDX_GROUPS and FOLDX_RUNS
+    are here for the key - defaults, so never forgotten, but FOLDX_GROUPS picks
+    which interface is compared and FOLDX_RUNS is the n of the mean.
+
+    FOLDX_WORKERS is excluded on purpose: parallelism only, it cannot move a
+    number, and in the key it would miss on every change of machine.
     """
     needs = set(routes.ROUTES["foldx"].needs_env)
 
@@ -198,7 +222,30 @@ def test_foldx_needs_env_lists_every_variable_the_adapter_reads() -> None:
         "FOLDX_BINARY",
         "DESIGN_PIPELINE_FOLDX_PDB",
         "DESIGN_PIPELINE_FOLDX",
+        "FOLDX_GROUPS",
+        "FOLDX_RUNS",
     }
+    assert "FOLDX_WORKERS" not in needs
+
+
+def test_foldx_runs_changes_the_cache_key() -> None:
+    """The bug this guards: FOLDX_RUNS is the n of the mean, and two requests
+    differing only in it used to collide on one key."""
+    route = routes.ROUTES["foldx"]
+    env = {"FOLDX_BINARY": "/x/foldx", "DESIGN_PIPELINE_FOLDX_PDB": "/x/s.pdb",
+           "DESIGN_PIPELINE_FOLDX": "/x/python"}
+
+    def key(**extra):
+        present = {v: (env | extra)[v] for v in route.needs_env if v in (env | extra)}
+        return cache.tool_key(structure_hash="s", candidate_hash="c",
+                              model_name="foldx",
+                              resolved={"kwargs": {}, "extra_args": [], "env": present})
+
+    assert key(FOLDX_RUNS="3") != key(FOLDX_RUNS="20")
+    assert key(FOLDX_GROUPS="AB,C") != key(FOLDX_GROUPS="A,BC")
+    # Unset stays unset: `api.py` skips an empty variable, so entries written
+    # before these two joined the tuple still resolve to the same key.
+    assert key() == key()
 
 
 def adapter_env_vars(adapter: object) -> set[str]:

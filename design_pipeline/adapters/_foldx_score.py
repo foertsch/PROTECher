@@ -18,8 +18,16 @@ from the environment.
     FOLDX_RUNS                 BuildModel runs per candidate, default 3
     FOLDX_WORKERS              FoldX processes in parallel, default 4
 
-Writes foldx.csv (variant_id, ddg, ddg_fold, n_runs). A candidate FoldX fails on is left out and named on stderr, so
-the scorer reads it as no score and never as zero.
+Writes foldx.csv (variant_id, ddg, ddg_sd, ddg_folding, n_runs). A candidate FoldX fails on is left out and named on
+stderr, so the scorer reads it as no score and never as zero.
+
+    ddg           mean binding ddG over the FOLDX_RUNS models, kcal/mol, positive means weaker binding
+    ddg_sd        sample SD of that mean's runs - FoldX's own precision on this candidate. Empty at FOLDX_RUNS=1,
+                  where there is no spread to report. Without it a ranking cannot say whether two candidates
+                  differ or whether BuildModel simply landed in two places.
+    ddg_folding   mean TOTAL energy change BuildModel reports: the folding free energy, a different quantity from
+                  ddg and not an aggregate of it. Called ddg_fold until 2026-11-24; a table under the old header is
+                  rewritten in place on the next run.
 """
 
 from __future__ import annotations
@@ -37,6 +45,9 @@ from pathlib import Path
 from typing import Sequence
 
 Mutation = tuple[str, int, str, str]    # chain, position, wild type, mutant
+
+FIELDS = ["variant_id", "ddg", "ddg_sd", "ddg_folding", "n_runs"]
+RENAMED = {"ddg_fold": "ddg_folding"}   # header changes a table written by an older version has to survive
 
 
 def read_candidates(path: Path) -> dict[str, list[Mutation]]:
@@ -106,11 +117,42 @@ def score_candidate(job: tuple) -> dict:
                 )
                 energies.append(parse_interaction_energy(result))
             shifts.append(energies[0] - energies[1])
-        return {"variant_id": variant_id, "ddg": statistics.mean(shifts), "ddg_fold": statistics.mean(parse_total_energies(dif)), "n_runs": len(shifts)}
+        # The spread of `shifts` is the only measure of FoldX's precision on this candidate, and it was computed and
+        # thrown away here: two candidates 0.001 kcal/mol apart used to be indistinguishable from two 1.0 apart. It
+        # needs two runs; at FOLDX_RUNS=1 the column is empty rather than 0, which would read as perfect agreement.
+        return {"variant_id": variant_id, "ddg": statistics.mean(shifts),
+                "ddg_sd": statistics.stdev(shifts) if len(shifts) >= 2 else "",
+                "ddg_folding": statistics.mean(parse_total_energies(dif)), "n_runs": len(shifts)}
     except Exception as exc:    # one failing candidate must not lose the others
         return {"variant_id": variant_id, "error": str(exc).splitlines()[0][:160]}
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def read_scored(out_csv: Path) -> tuple[dict[str, dict], bool]:
+    """The candidates already in foldx.csv, and whether the file had to be rewritten to hold them.
+
+    A table written before ddg_sd existed, or under ddg_fold's old name, carries a header that an append of today's
+    FIELDS would write five columns under - rows that no longer line up with their own header, and nothing would say
+    so until whoever reads the file next gets the wrong column. So the file is brought up to FIELDS first, keeping
+    every row. An older run's per-run spread cannot be recovered, so ddg_sd stays EMPTY for those rows rather than 0,
+    which would claim the three runs agreed perfectly.
+    """
+    if not out_csv.is_file():
+        return {}, False
+    with out_csv.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        present = list(reader.fieldnames or ())
+        scored = {row["variant_id"]: row for row in reader if row.get("variant_id")}
+    if not present or present == FIELDS:
+        return scored, False
+    with out_csv.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=FIELDS)
+        writer.writeheader()
+        for row in scored.values():
+            under_new_names = {RENAMED.get(key, key): value for key, value in row.items()}
+            writer.writerow({key: under_new_names.get(key, "") for key in FIELDS})
+    return scored, True
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -165,16 +207,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     # minutes each, that is hours. Rows are now appended as they finish and
     # candidates already in foldx.csv are skipped, so a re-run continues instead
     # of restarting.
-    fields = ["variant_id", "ddg", "ddg_fold", "n_runs"]
+    fields = FIELDS
     out_csv = args.out_dir / "foldx.csv"
-    scored_already: dict[str, dict] = {}
-    if out_csv.is_file():
-        with out_csv.open(newline="") as handle:
-            scored_already = {
-                row["variant_id"]: row
-                for row in csv.DictReader(handle)
-                if row.get("variant_id")
-            }
+    scored_already, rewritten = read_scored(out_csv)
+    if rewritten:
+        print(
+            f"foldx: rewrote {out_csv.name} under the current header "
+            f"({', '.join(fields)}); {len(scored_already)} row(s) kept, ddg_sd empty for them",
+            flush=True,
+        )
     pending = [job for job in jobs if job[2] not in scored_already]
     print(
         f"foldx: {len(pending)} candidates on {pdb.name}, {runs} run(s) each, "

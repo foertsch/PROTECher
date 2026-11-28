@@ -2,10 +2,11 @@
 
 import importlib
 import json
-import sys
+from pathlib import Path
 
 import biotite.structure.io as strucio
 import pytest
+from conftest import write_python_stub
 
 import site_guard
 
@@ -16,18 +17,16 @@ def dockq(tmp_path, monkeypatch):
 
     If STUB_ARGV names a file, the model and native paths of each call are appended to it as one JSON line.
     """
-    stub = tmp_path / "DockQ"
-    stub.write_text(
-        f"#!{sys.executable}\n"
+    stub = write_python_stub(
+        tmp_path / "DockQ",
         "import json, os, sys\n"
         "if os.environ.get('STUB_ARGV'):\n"
         "    open(os.environ['STUB_ARGV'], 'a').write(json.dumps(sys.argv[1:3]) + chr(10))\n"
         "if os.environ.get('STUB_FAIL'):\n"
         "    sys.exit(3)\n"
         "out = sys.argv[sys.argv.index('--json') + 1]\n"
-        "json.dump({'best_result': {'AB': json.loads(os.environ['STUB_RESULT'])}}, open(out, 'w'))\n"
+        "json.dump({'best_result': {'AB': json.loads(os.environ['STUB_RESULT'])}}, open(out, 'w'))\n",
     )
-    stub.chmod(0o755)
     monkeypatch.setattr(site_guard, "DOCKQ", str(stub))
 
     def returns(dockq_value, fnat, irmsd=1.0, lrmsd=2.0):
@@ -126,10 +125,13 @@ def test_the_default_dockq_path_comes_from_protecher_scratch_unless_dockq_is_set
         m.delenv("DOCKQ", raising=False)
         m.setenv("PROTECHER_SCRATCH", "/x/scratch")
         importlib.reload(site_guard)
-        assert site_guard.DOCKQ == "/x/scratch/protecher_tools/dockq/bin/DockQ"
+        # Path, not str: os.path.join uses the platform separator, so the string
+        # form of this is "\x\scratch\..." on Windows and the test is about where
+        # the default points, not about which slash the OS writes it with.
+        assert Path(site_guard.DOCKQ) == Path("/x/scratch/protecher_tools/dockq/bin/DockQ")
         m.setenv("DOCKQ", "/y/DockQ")
         importlib.reload(site_guard)
-        assert site_guard.DOCKQ == "/y/DockQ"
+        assert Path(site_guard.DOCKQ) == Path("/y/DockQ")
     importlib.reload(site_guard)
 
 

@@ -1,4 +1,4 @@
-"""The co-folding adapters: Chai-1, Boltz-2, Protenix.
+"""The co-folding adapters: Chai-1 and Boltz-2.
 
 Offline. The real tools are stubbed at their one seam each — the imported
 `run_inference` for Chai-1, `stream` for the two that shell out — and the stub
@@ -26,10 +26,9 @@ from design_pipeline import (
 )
 from design_pipeline.denovo import predict_structure
 from design_pipeline.scoring import score_designs
-from design_pipeline.adapters import _boltz, _chai, _dummy, _folding, _protenix
+from design_pipeline.adapters import _boltz, _chai, _dummy, _folding
 from design_pipeline.adapters._boltz import BoltzAdapter
 from design_pipeline.adapters._chai import ChaiAdapter
-from design_pipeline.adapters._protenix import ProtenixAdapter
 
 COLABFOLD_KEYS = {"plddt", "ptm", "iptm"}
 """What the ColabFold adapter puts in `scores`, and so what every other
@@ -73,24 +72,16 @@ def pae_matrix(token: str) -> list[list[float]]:
 # --- registry and defaults ---------------------------------------------------
 
 
-def test_the_three_names_resolve_to_their_adapters() -> None:
+def test_the_two_names_resolve_to_their_adapters() -> None:
     assert isinstance(get_adapter("chai"), ChaiAdapter)
     assert isinstance(get_adapter("boltz"), BoltzAdapter)
-    assert isinstance(get_adapter("protenix"), ProtenixAdapter)
 
 
 def test_each_has_a_dummy_counterpart() -> None:
-    for name in ("dummy_chai", "dummy_boltz", "dummy_protenix"):
+    for name in ("dummy_chai", "dummy_boltz"):
         adapter = get_adapter(name)
         assert isinstance(adapter, _dummy.DummyFold)
         assert adapter.producer == name
-
-
-def test_colabfold_is_still_registered_and_unchanged() -> None:
-    from design_pipeline.adapters._colabfold import ColabFoldAdapter
-
-    assert isinstance(get_adapter("colabfold"), ColabFoldAdapter)
-    assert "colabfold" in REGISTRY
 
 
 def test_chai_is_the_default_folding_model() -> None:
@@ -108,7 +99,7 @@ def test_importing_the_package_imports_no_model() -> None:
     assert not {
         m
         for m in sys.modules
-        if m.split(".")[0] in {"torch", "jax", "chai_lab", "boltz", "protenix"}
+        if m.split(".")[0] in {"torch", "jax", "chai_lab", "boltz"}
     }
 
 
@@ -153,7 +144,7 @@ def test_an_unknown_capability_does_not_block(monkeypatch) -> None:
 def test_each_adapter_checks_the_gpu_before_the_tool(monkeypatch, tmp_path, sequence):
     """The guard comes first: no weights download, no missing-executable error."""
     monkeypatch.setattr(_folding.sys, "platform", "darwin")
-    for adapter in (ChaiAdapter(), BoltzAdapter(), ProtenixAdapter()):
+    for adapter in (ChaiAdapter(), BoltzAdapter()):
         with pytest.raises(MissingGPUError):
             adapter.run([sequence], tmp_path / "out")
 
@@ -466,101 +457,6 @@ def test_boltz_reports_an_empty_run(monkeypatch, tmp_path, sequence, on_gpu):
         BoltzAdapter().run([sequence], tmp_path / "fold")
 
 
-# --- protenix ----------------------------------------------------------------
-
-
-@pytest.fixture
-def protenix_ran(monkeypatch):
-    """Record the command; write what `protenix predict` writes."""
-    calls: list[list[str]] = []
-    monkeypatch.setattr(_protenix.shutil, "which", lambda name: f"/usr/bin/{name}")
-
-    def run(cmd):
-        cmd = [str(c) for c in cmd]
-        calls.append(cmd)
-        out = Path(cmd[cmd.index("--out_dir") + 1])
-        seed = cmd[cmd.index("--seeds") + 1]
-        job = json.loads(Path(cmd[cmd.index("--input") + 1]).read_text())[0]
-        name = job["name"]
-        predictions = out / "default" / name / f"seed_{seed}" / "predictions"
-        write_prediction_cif(predictions / f"{name}_sample_0.cif", token="protenix")
-        (predictions / f"{name}_summary_confidence_sample_0.json").write_text(
-            # Protenix reports pLDDT on the 0-100 scale already.
-            json.dumps(
-                {"plddt": 88.5, "ptm": 0.74, "iptm": 0.61, "ranking_score": 0.69}
-            )
-        )
-        (predictions / f"{name}_full_data_sample_0.json").write_text(
-            json.dumps({"token_pair_pae": pae_matrix("protenix")})
-        )
-
-    monkeypatch.setattr(_protenix, "stream", run)
-    return calls
-
-
-def test_protenix_normalizes_scores_and_hands_back_a_pdb(
-    tmp_path, sequence, on_gpu, protenix_ran
-) -> None:
-    out = tmp_path / "fold"
-    out.mkdir()
-    design = ProtenixAdapter().run([sequence], out)[0]
-
-    assert design.producer == "protenix"
-    assert design.parent_id == sequence.id
-    assert design.path.suffix == ".pdb" and design.path.is_file()
-    assert Path(design.meta["cif"]).is_file()
-    assert "summary_confidence" in Path(design.meta["raw_scores"]).name
-    assert design.meta["checkpoint"] == _protenix.BASE_CHECKPOINT
-
-    assert COLABFOLD_KEYS <= set(design.scores)
-    assert design.scores["plddt"] == pytest.approx(88.5)
-    assert design.scores["protenix_ranking_score"] == pytest.approx(0.69)
-
-    payload = json.loads(Path(design.meta["scores_json"]).read_text())
-    assert len(payload["pae"]) == TOKENS
-
-
-def test_protenix_converts_the_fasta_to_its_json_input(
-    tmp_path, sequence, on_gpu, protenix_ran
-) -> None:
-    out = tmp_path / "fold"
-    out.mkdir()
-    ProtenixAdapter().run([sequence], out)
-    cmd = protenix_ran[0]
-    job = json.loads(Path(cmd[cmd.index("--input") + 1]).read_text())
-
-    assert len(job) == 1 and job[0]["name"] == sequence.id
-    chains = [entry["proteinChain"] for entry in job[0]["sequences"]]
-    assert [len(c["sequence"]) for c in chains] == [_dummy.CHAIN_A, _dummy.CHAIN_B]
-    assert {c["count"] for c in chains} == {1}
-
-
-def test_protenix_takes_a_checkpoint(tmp_path, sequence, on_gpu, protenix_ran) -> None:
-    out = tmp_path / "fold"
-    out.mkdir()
-    ProtenixAdapter().run([sequence], out)
-    cmd = protenix_ran[0]
-    assert cmd[cmd.index("--model_name") + 1] == _protenix.BASE_CHECKPOINT
-    # Its bool options take a value, so True is not a bare switch here.
-    assert cmd[cmd.index("--use_msa") + 1] == "True"
-    assert cmd[cmd.index("--need_atom_confidence") + 1] == "True"
-
-    design = ProtenixAdapter().run(
-        [sequence], out, checkpoint=_protenix.MINI_CHECKPOINT, use_msa=False
-    )[0]
-    cmd = protenix_ran[1]
-    assert cmd[cmd.index("--model_name") + 1] == _protenix.MINI_CHECKPOINT
-    assert cmd[cmd.index("--use_msa") + 1] == "False"
-    assert design.meta["checkpoint"] == _protenix.MINI_CHECKPOINT
-
-
-def test_protenix_missing_names_the_extra(monkeypatch, tmp_path, sequence, on_gpu):
-    monkeypatch.setattr(_protenix.shutil, "which", lambda name: None)
-    with pytest.raises(MissingDependencyError) as exc:
-        ProtenixAdapter().run([sequence], tmp_path / "fold")
-    assert "[protenix]" in str(exc.value) and "dummy_protenix" in str(exc.value)
-
-
 # --- the fixtures, and the list form across two models -----------------------
 
 
@@ -591,11 +487,11 @@ def test_a_model_list_folds_every_sequence_with_both_models(tmp_path) -> None:
         backbones, tmp_path / "seqs", model_name="dummy_sequences", num_seqs=1
     )
     preds = predict_structure(
-        seqs, tmp_path / "fold", model_name=["dummy_chai", "dummy_protenix"]
+        seqs, tmp_path / "fold", model_name=["dummy_chai", "dummy_boltz"]
     )
 
     assert len(preds) == 2 * len(seqs)
-    assert [d.producer for d in preds] == ["dummy_chai"] * 2 + ["dummy_protenix"] * 2
+    assert [d.producer for d in preds] == ["dummy_chai"] * 2 + ["dummy_boltz"] * 2
     assert [d.parent_id for d in preds] == [s.id for s in seqs] * 2
     assert len({d.id for d in preds}) == len(preds)
     assert all(d.path.suffix == ".pdb" and d.path.is_file() for d in preds)

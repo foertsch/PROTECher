@@ -60,6 +60,16 @@ def new_motifs(wild: str, mutant: str) -> list[str]:
     Occurrence-wise rather than count-wise: a motif that moves along the chain
     is a new liability at its new position, and one that was already there is
     not this variant's fault.
+
+    Known blind spot, and the cost of a broad character class: a substitution
+    that changes WHICH member of a class sits at an already-matched position
+    reports nothing, because the start position has not moved. `N[GST]` covers
+    it - `A:T31G` turns NT into NG at the same asparagine, and NG is the
+    high-risk deamidation motif while NT and NS are weaker, so the liability
+    rose and this returns []. Three of the 4,313 single substitutions do this,
+    all deamidation, none of them in the 432 design sets. Grading the class
+    into separate motifs would catch them, at the cost of one rule per severity;
+    `examples/liability_union_check.py` is where the three are enumerated.
     """
     found: list[str] = []
     for label, pattern in LIABILITIES:
@@ -80,10 +90,22 @@ def liability_reasons(
     One implementation of the rules, because there were two: this one and a
     narrower copy in `examples/track_a_run.py` that had no `D[GSD]` and no `DP`
     rule, used `NG` where this one uses `N[GST]`, and compared cysteine counts
-    instead of positions. Over the 4,313 single substitutions of the
-    trastuzumab scFv the two disagreed on 233 candidates - 158 motifs only this
-    one caught, 75 cysteine calls only the copy made - so the union lives here
-    and the copy calls it.
+    instead of positions. Over the 4,313 single substitutions of the two
+    variable domains this rule flags 511 and the copy flagged 372, disagreeing
+    on 145: 142 only this one catches - isomerization 82, deamidation 40,
+    fragmentation 21, the motifs the copy lacked - and 3 only the copy caught
+    (see `new_motifs`). So the union lives here and the copy calls it.
+
+    The copy made no cysteine call this rule misses. All four variable-domain
+    cysteines of 1N8Z are in a disulfide, so `disulfide_break` covers every
+    count change the copy's comparison could see; a count rule would only add
+    something on a chain with a free cysteine to begin with.
+
+    Measured by `examples/liability_union_check.py`, which also checks the rule
+    against the 29-variant direction panel: it vetoes none of the 21 measured
+    improvements, and fails one loss on a new sequon it is right about. Neither
+    the 432 design sets nor the shipped 115 fail it, so the merge changed no
+    selection - it is a correctness fix.
 
     `chains` is the parent sequence per chain, 1-based like `position` in the
     variant table. `paired_cysteines` names the cysteines that are in a

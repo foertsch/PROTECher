@@ -321,15 +321,33 @@ ROUTES: Mapping[str, Route] = {
         how="licence-gated: your own FoldX binary. Set FOLDX_BINARY, DESIGN_PIPELINE_FOLDX_PDB and DESIGN_PIPELINE_FOLDX (the Python that runs adapters/_foldx_score.py)",
         verified=True,
         env_var="DESIGN_PIPELINE_FOLDX",
-        # All three, because the adapter reads all three: FOLDX_BINARY and
+        # Every variable the adapter reads that changes the numbers it writes,
+        # because `api.py` builds the cache key from this tuple: FOLDX_BINARY and
         # DESIGN_PIPELINE_FOLDX_PDB in _foldx_score.py, DESIGN_PIPELINE_FOLDX as
         # the interpreter that runs it. Listing only the first meant preflight
         # never reported the structure variable as unset, which is the one most
         # likely to be forgotten - there is no sensible default for it.
+        #
+        # FOLDX_GROUPS and FOLDX_RUNS joined the tuple for the cache's sake, not
+        # preflight's: both have defaults, so neither goes unset by accident, but
+        # both decide what the ddG MEANS and were invisible to the key.
+        # FOLDX_GROUPS picks which two chain groups AnalyseComplex compares, so
+        # changing it returns a real number for a different interface.
+        # FOLDX_RUNS is the n of the mean, so a request for 20 runs used to be
+        # served the cached 3-run values under an identical key - the same
+        # failure the DESIGN_PIPELINE_FOLDX_PDB comment in api.py describes, one
+        # variable short of being caught.
+        #
+        # FOLDX_WORKERS is deliberately NOT here. It only sets how many FoldX
+        # processes run at once, and each candidate is scored in its own
+        # directory, so it cannot move a number. In the key it would buy nothing
+        # and cost a cache miss for every change of machine.
         needs_env=(
             "FOLDX_BINARY",
             "DESIGN_PIPELINE_FOLDX_PDB",
             "DESIGN_PIPELINE_FOLDX",
+            "FOLDX_GROUPS",
+            "FOLDX_RUNS",
         ),
         note=(
             "Set DESIGN_PIPELINE_FOLDX_PDB to the trimmed, repaired Fv plus "
@@ -423,20 +441,10 @@ ROUTES: Mapping[str, Route] = {
         env_var="DESIGN_PIPELINE_BOLTZ",
         needs_env=("BOLTZ_CACHE",),
     ),
-    "protenix": Route(
-        step=STRUCTURE, env=ENV_B, how="pip install 'design-pipeline[protenix]'",
-        module="protenix",
-        env_var="DESIGN_PIPELINE_PROTENIX",
-        note=(
-            "Not provisioned: it served de novo design. The route stays because "
-            "the adapter does; provision/manifest.toml is what we build."
-        ),
-    ),
-    "colabfold": Route(
-        step=STRUCTURE, env=ENV_B, how="pip install 'design-pipeline[colabfold]'",
-        executable="colabfold_batch",
-        env_var="DESIGN_PIPELINE_COLABFOLD",
-    ),
+    # protenix and colabfold were routed here until 2026-11-25. Both are gone,
+    # adapters included: neither was in provision/manifest.toml, so neither could
+    # be reached from a provisioned box, and nothing under runs/ came from either.
+    # A route whose adapter cannot run is a row in preflight that always says no.
     "protein_mpnn": Route(
         step=DENOVO, env=ENV_B, how="pip install 'design-pipeline[mpnn]'",
         executable="ligandmpnn",

@@ -416,8 +416,7 @@ class AntiBertyMaskedLM:
         positions: Sequence[int],
     ) -> Mapping[int, Mapping[str, float]]:
 
-        import torch
-
+        torch = _torch()
         runner = self._load()
         model, tokenizer = runner.model, runner.tokenizer
         # The column-axis guard. `token_to_id` is the model's own mapping;
@@ -457,6 +456,25 @@ class AntiBertyMaskedLM:
                 "'design-pipeline[plm]'`, which also brings torch."
             ) from exc
         return AntiBERTyRunner()
+
+
+def _torch():
+    """torch, or this package's own error naming the extra that provides it.
+
+    `AntiBertyMaskedLM.log_probs` used a bare `import torch`, so a user without the
+    plm extra got `ModuleNotFoundError: No module named 'torch'` - true, but it does
+    not say which extra to install, and every other backend here says so. The two
+    `_load` methods guard their own imports inline; this exists for the one import
+    that is not inside a `_load`.
+    """
+    try:
+        import torch
+    except ModuleNotFoundError as exc:
+        raise MissingDependencyError(
+            "torch is not installed. `uv pip install 'design-pipeline[plm]'`. To "
+            "run the pipeline with no model at all, use model_name='dummy_scorer'."
+        ) from exc
+    return torch
 
 
 def _logsumexp(values: Sequence[float]) -> float:

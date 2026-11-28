@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import csv
 import importlib.util
-import stat
-import sys
 from pathlib import Path
+
+from conftest import write_python_stub
 
 import pytest
 
@@ -28,35 +28,33 @@ PDB = (
     "END\n"
 )
 
-FAKE = '''#!{python}
-import pathlib, shutil, sys
+FAKE = '''import pathlib, shutil, sys
 args = dict(a[2:].split("=", 1) for a in sys.argv[1:] if a.startswith("--") and "=" in a)
 if args["command"] == "BuildModel":
     name = args["pdb"]; stem = name[:-4]; out = pathlib.Path(args["output-dir"])
     runs = int(args["numberOfRuns"])
     assert pathlib.Path(args["mutant-file"]).read_text().strip().endswith("A;")
     for i in range(runs):
-        shutil.copy(pathlib.Path(args["pdb-dir"]) / name, out / f"{{stem}}_1_{{i}}.pdb")
-        shutil.copy(pathlib.Path(args["pdb-dir"]) / name, out / f"WT_{{stem}}_1_{{i}}.pdb")
-    rows = "".join(f"{{stem}}_1_{{i}}.pdb\\t{{1.0 + i}}\\t0\\n" for i in range(runs))
-    (out / f"Dif_{{stem}}.fxout").write_text(
+        shutil.copy(pathlib.Path(args["pdb-dir"]) / name, out / f"{stem}_1_{i}.pdb")
+        shutil.copy(pathlib.Path(args["pdb-dir"]) / name, out / f"WT_{stem}_1_{i}.pdb")
+    rows = "".join(f"{stem}_1_{i}.pdb\\t{1.0 + i}\\t0\\n" for i in range(runs))
+    (out / f"Dif_{stem}.fxout").write_text(
         "FoldX\\n\\nOutput type: BuildModel\\nPdb\\ttotal energy\\tBackbone Hbond\\n" + rows)
 else:
     name = args["pdb"]; stem = name[:-4]; out = pathlib.Path(args["output-dir"])
     energy = -19.0 if name.startswith("WT_") else -17.5
-    (out / f"Interaction_{{stem}}_AC.fxout").write_text(
+    (out / f"Interaction_{stem}_AC.fxout").write_text(
         "FoldX\\n\\nOutput type: AnalyseComplex\\n"
         "Pdb\\tGroup1\\tGroup2\\tIntraclashesGroup1\\tIntraclashesGroup2\\tInteraction Energy\\n"
-        f"{{name}}\\tAB\\tC\\t1\\t2\\t{{energy}}\\n")
+        f"{name}\\tAB\\tC\\t1\\t2\\t{energy}\\n")
 '''
+"""The fake FoldX, as its own source. Plain braces: nothing formats this string any
+more, so the `{{...}}` escaping it used to need for `.format()` is gone."""
 
 
 @pytest.fixture
 def fake_foldx(tmp_path: Path) -> Path:
-    path = tmp_path / "foldx_fake"
-    path.write_text(FAKE.format(python=sys.executable))
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
-    return path
+    return write_python_stub(tmp_path / "foldx_fake", FAKE)
 
 
 @pytest.fixture
@@ -112,9 +110,7 @@ def test_scan_writes_one_row_per_position_with_the_expected_shift(
 
 
 def test_a_failing_foldx_marks_the_position_and_exits_nonzero(tmp_path: Path, repaired: Path):
-    broken = tmp_path / "foldx_broken"
-    broken.write_text(f"#!{sys.executable}\nprint('no output written')\n")
-    broken.chmod(broken.stat().st_mode | stat.S_IXUSR)
+    broken = write_python_stub(tmp_path / "foldx_broken", "print('no output written')\n")
     out = tmp_path / "out"
     code = scan.main(
         ["--foldx", str(broken), "--pdb", str(repaired), "--scan-chains", "B", "--groups", "AB,C",
